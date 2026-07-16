@@ -13,11 +13,22 @@ DOC     ?= brd
 FORCE   ?=
 FORCE_FLAG := $(if $(FORCE),--force,)
 
+# ── Export Word (.docx) ──────────────────────────────────────
+DOCS_DIR   ?= docs
+EXPORT_DIR ?= export
+# Kalau ada docs/reference.docx, dipakai sebagai template style Word (branding).
+REFERENCE  := $(wildcard $(DOCS_DIR)/reference.docx)
+REF_FLAG   := $(if $(REFERENCE),--reference-doc=$(REFERENCE),)
+# Semua .md di dalam docs/ → daftar target .docx di dalam export/
+MD_FILES   := $(shell find $(DOCS_DIR) -type f -name '*.md')
+DOCX_FILES := $(patsubst $(DOCS_DIR)/%.md,$(EXPORT_DIR)/%.docx,$(MD_FILES))
+
 .DEFAULT_GOAL := help
 
 .PHONY: help product add list detail remove docs \
         h2h onboarding los all-products brd srs api db uiux \
-        test-plan test-case sit uat deploy manual
+        test-plan test-case sit uat deploy manual \
+        export export-clean
 
 ## help: tampilkan daftar target
 help:
@@ -34,6 +45,9 @@ help:
 	@echo ""
 	@echo "  Shortcut produk: make h2h | onboarding | los | all-products"
 	@echo "  Shortcut dokumen: make brd|srs|api|db|uiux|test-plan|test-case|sit|uat|deploy|manual PRODUCT=\"...\""
+	@echo ""
+	@echo "  make export                            convert semua .md → .docx ke folder export/"
+	@echo "  make export-clean                      hapus folder export/"
 	@echo ""
 
 ## product: buat produk + scaffold 11 dokumen
@@ -82,3 +96,22 @@ sit:        ; $(CLI) add sit -p "$(PRODUCT)" $(FORCE_FLAG)
 uat:        ; $(CLI) add uat -p "$(PRODUCT)" $(FORCE_FLAG)
 deploy:     ; $(CLI) add deployment-guide -p "$(PRODUCT)" $(FORCE_FLAG)
 manual:     ; $(CLI) add user-manual -p "$(PRODUCT)" $(FORCE_FLAG)
+
+# ── Export ke Word (.docx) ───────────────────────────────────
+## export: convert semua docs/**/*.md → export/**/*.docx (struktur folder ikut)
+export: $(DOCX_FILES)
+	@echo ""
+	@echo "✅ Export selesai → $(EXPORT_DIR)/ ($(words $(DOCX_FILES)) file)"
+	$(if $(REFERENCE),@echo "   Template style: $(REFERENCE)",@echo "   (tanpa template — taruh $(DOCS_DIR)/reference.docx untuk branding)")
+
+# Rule: satu .docx per .md, mirror struktur folder docs/ → export/
+$(EXPORT_DIR)/%.docx: $(DOCS_DIR)/%.md
+	@mkdir -p $(dir $@)
+	@echo "📄 $< → $@"
+	@pandoc "$<" -f gfm -o "$@" $(REF_FLAG) \
+		--toc --toc-depth=3 --resource-path="$(dir $<)"
+
+## export-clean: hapus seluruh folder export/
+export-clean:
+	@rm -rf $(EXPORT_DIR)
+	@echo "🗑️  $(EXPORT_DIR)/ dihapus"
