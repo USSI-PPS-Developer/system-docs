@@ -6,7 +6,7 @@
 |-------------------|---------------------|
 | Produk            | Host 2 Host     |
 | Jenis Dokumen     | Business Requirement Document (BRD)         |
-| Versi             | 1.0.0               |
+| Versi             | 1.1.0               |
 | Tanggal Dibuat    | 16 Juli 2026              |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
@@ -60,7 +60,7 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
   daftar nasabah WNA.
 - **Tabungan**: registrasi rekening, pencarian, inquiry saldo, dan daftar rekening.
 - **Pinjaman/Kredit**: registrasi, jadwal angsuran, tagihan, saldo, dan daftar pinjaman.
-- **Deposito**: registrasi dan inquiry saldo.
+- **Deposito**: registrasi (termasuk produk *special rate* dengan suku bunga kustom), inquiry saldo, dan daftar produk *special rate*.
 - **Transaksi (money-path)**: transaksi tabungan (setoran/penarikan/transfer), pencairan
   pinjaman, angsuran pinjaman, setoran deposito, cek status transaksi, dan reversal.
 - **Referensi transaksi**: daftar tipe integrasi transaksi & kode binding bank.
@@ -197,6 +197,7 @@ uang.
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
+| 1.1.0 | 16 Juli 2026 | | Ruang lingkup deposito diperluas: produk *special rate* (suku bunga kustom) & daftar produknya. |
 
 ---
 

@@ -6,7 +6,7 @@
 |-------------------|---------------------|
 | Produk            | Host 2 Host     |
 | Jenis Dokumen     | API Contract         |
-| Versi             | 1.0.0               |
+| Versi             | 1.1.0               |
 | Tanggal Dibuat    | 16 Juli 2026              |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
@@ -42,7 +42,7 @@
 
 > **Catatan idempotency:** endpoint transaksional memakai reservasi atomik (`SET NX`). Retry
 > dengan key yang sama sebelum TTL habis dibalas `409` (`93`). Endpoint GET WNA, Rekap,
-> Monitoring, dan Default tidak memerlukan `X-IDEMPOTENCY-KEY`.
+> produk deposito *special rate*, Monitoring, dan Default tidak memerlukan `X-IDEMPOTENCY-KEY`.
 
 ### 2.2 Format Response Standar
 Seluruh endpoint bisnis mengembalikan envelope `ApiResponse<T>`:
@@ -114,38 +114,39 @@ Seluruh endpoint bisnis mengembalikan envelope `ApiResponse<T>`:
 ### 3.5 Deposito — `/api/v1/deposito`
 | No | Method | Endpoint | Deskripsi |
 |----|--------|----------|-----------|
-| 23 | `POST` | `/registrasi` | Registrasi deposito baru. |
+| 23 | `POST` | `/registrasi` | Registrasi deposito baru (mendukung produk *special rate*). |
 | 24 | `POST` | `/saldo` | Inquiry saldo deposito. |
+| 25 | `GET`  | `/produk-spesial-rate` | Daftar produk deposito ber-*custom rate* (`is_custom_rate=1`). |
 
 ### 3.6 Transaksi — `/api/v1/transaksi`
 | No | Method | Endpoint | Deskripsi |
 |----|--------|----------|-----------|
-| 25 | `POST` | `/tipe` | Daftar tipe integrasi transaksi. |
-| 26 | `POST` | `/bindingBank` | Daftar kode binding bank. |
-| 27 | `POST` | `/tabungan` | Transaksi tabungan (setor/tarik/transfer). |
-| 28 | `POST` | `/pencairanPinjaman` | Pencairan pinjaman. |
-| 29 | `POST` | `/angsuranPinjaman` | Angsuran pinjaman. |
-| 30 | `POST` | `/setoranDeposito` | Setoran deposito. |
-| 31 | `POST` | `/status` | Cek status transaksi. |
-| 32 | `POST` | `/reversal` | Reversal transaksi. |
+| 26 | `POST` | `/tipe` | Daftar tipe integrasi transaksi. |
+| 27 | `POST` | `/bindingBank` | Daftar kode binding bank. |
+| 28 | `POST` | `/tabungan` | Transaksi tabungan (setor/tarik/transfer). |
+| 29 | `POST` | `/pencairanPinjaman` | Pencairan pinjaman. |
+| 30 | `POST` | `/angsuranPinjaman` | Angsuran pinjaman. |
+| 31 | `POST` | `/setoranDeposito` | Setoran deposito. |
+| 32 | `POST` | `/status` | Cek status transaksi. |
+| 33 | `POST` | `/reversal` | Reversal transaksi. |
 
 ### 3.7 Rekap (HQ/admin) — `/api/v1/rekap`
 | No | Method | Endpoint | Deskripsi |
 |----|--------|----------|-----------|
-| 33 | `GET` | `/setoran-tab-marketing` | Rekap setoran tabungan per marketing. |
-| 34 | `GET` | `/penarikan-tab-marketing` | Rekap penarikan tabungan per marketing. |
+| 34 | `GET` | `/setoran-tab-marketing` | Rekap setoran tabungan per marketing. |
+| 35 | `GET` | `/penarikan-tab-marketing` | Rekap penarikan tabungan per marketing. |
 
 ### 3.8 Monitoring — `/api/monitoring/logs`
 | No | Method | Endpoint | Deskripsi |
 |----|--------|----------|-----------|
-| 35 | `GET` | `` (base) | Daftar log API (paged, filter). |
-| 36 | `GET` | `/{id}` | Detail log API. |
-| 37 | `GET` | `/export` | Ekspor log API ke CSV. |
+| 36 | `GET` | `` (base) | Daftar log API (paged, filter). |
+| 37 | `GET` | `/{id}` | Detail log API. |
+| 38 | `GET` | `/export` | Ekspor log API ke CSV. |
 
 ### 3.9 Default
 | No | Method | Endpoint | Deskripsi |
 |----|--------|----------|-----------|
-| 38 | `GET` | `/` | Health/greeting service. |
+| 39 | `GET` | `/` | Health/greeting service. |
 
 ---
 
@@ -408,12 +409,41 @@ data nasabah (`CheckNikProjection` / `CheckIdentitasProjection` / `CheckIdentita
 
 ---
 
-### 4.12 `POST /api/v1/deposito/*`
+### 4.12 `POST /api/v1/deposito/*` · `GET /api/v1/deposito/produk-spesial-rate`
 
 | Endpoint | Request DTO | Field kunci | Guard |
 |----------|-------------|-------------|-------|
-| `/registrasi` | `CreateDepositoRequestDTO` | `kodeKantor`,`userId`,`nasabahId`,`kodeProduk`,`tglRegistrasi`,`jkw`,`jmlDeposito`,`noAlternatifRek`,`kodeAro`,`perlakuanBunga`,`noRekeningTabungan`(opsional) | `assertOffice(kodeKantor)` |
-| `/saldo` | `InquirySaldoRequestDTO` | `tglTrans`,`noRekening`,`userId` | `assertDepositoOffice(noRekening)` |
+| `POST /registrasi` | `CreateDepositoRequestDTO` | `kodeKantor`,`userId`,`nasabahId`,`kodeProduk`,`tglRegistrasi`,`jkw`,`jmlDeposito`,`noAlternatifRek`,`kodeAro`,`perlakuanBunga`,`noRekeningTabungan`(opsional),`sukuBunga`(kondisional — lihat *special rate*) | `assertOffice(kodeKantor)` |
+| `POST /saldo` | `InquirySaldoRequestDTO` | `tglTrans`,`noRekening`,`userId` | `assertDepositoOffice(noRekening)` |
+| `GET /produk-spesial-rate` | — (hanya `Authorization`) | — | — (tabel referensi global, tanpa tenant guard) |
+
+#### Aturan produk *special rate* (registrasi)
+
+Produk ditandai *special/custom rate* bila `dep_produk.is_custom_rate = 1` (lihat daftarnya
+via `GET /produk-spesial-rate`). Perilaku registrasi bercabang berdasarkan flag ini:
+
+| Kondisi | `sukuBunga` (payload) | `jkw` yang diperbolehkan | Sumber suku bunga tersimpan |
+|---------|-----------------------|--------------------------|-----------------------------|
+| **Special rate** (`is_custom_rate=1`) | **Wajib**, `> 0` | Hanya **6** atau **12** | Dari payload (`sukuBunga`) |
+| **Non-special** (`is_custom_rate=0`) | Diabaikan (opsional) | Sesuai aturan produk (`JKW_RULES`) | Default produk (`dep_produk`) |
+
+- `sukuBunga` tidak diisi / `≤ 0` pada produk special rate → **`03`** (`SPECIAL_RATE_REQUIRED`, HTTP 400).
+- `jkw` bukan 6/12 pada produk special rate → **`95`** (`BUSINESS_EXCEPTION`, HTTP 400).
+- Field selain suku bunga tetap memakai default produk (mis. `persen_pph`) pada kedua cabang.
+
+**`GET /produk-spesial-rate` — Response 200 OK**
+```json
+{
+  "responseCode": "00",
+  "responseData": [
+    { "kodeProduk": "399", "deskripsiProduk": "Deposito Lain-lain" }
+  ],
+  "responseMessage": "Daftar produk deposito spesial rate berhasil ditemukan"
+}
+```
+
+> Endpoint GET ini bersifat referensi (read-only), **tanpa** `X-IDEMPOTENCY-KEY`. Hanya
+> mengembalikan `kodeProduk` + `deskripsiProduk` (flag `is_custom_rate` tidak diekspos).
 
 ---
 
@@ -598,6 +628,7 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 | `00` | Sukses (`SUCCESS`) | 200 |
 | `01` | Data tidak ditemukan (`NOT_FOUND`) | 200/404 |
 | `02` | Validasi gagal (`VALIDATION_ERROR`) | 400 |
+| `03` | Produk *special rate* wajib mengisi `sukuBunga` (`SPECIAL_RATE_REQUIRED`) | 400 |
 | `90` | Layanan tidak tersedia (`SERVICE_UNAVAILABLE`, mis. Redis down) | 503 |
 | `91` | Data duplikat (`DUPLICATE_DATA`) | 400 |
 | `92` | `client_id` tidak ditemukan/aktif (`CLIENT_ID_NOT_FOUND`) | 200 |
@@ -618,6 +649,7 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
+| 1.1.0 | 16 Juli 2026 | | Tambah `GET /deposito/produk-spesial-rate`; registrasi deposito mendukung produk *special rate* (`sukuBunga` wajib, `jkw` 6/12); response code baru `03` (`SPECIAL_RATE_REQUIRED`). |
 
 ---
 

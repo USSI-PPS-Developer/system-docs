@@ -6,7 +6,7 @@
 |-------------------|---------------------|
 | Produk            | Host 2 Host     |
 | Jenis Dokumen     | Deployment Guide         |
-| Versi             | 1.0.0               |
+| Versi             | 1.1.0               |
 | Tanggal Dibuat    | 16 Juli 2026              |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
@@ -123,8 +123,10 @@ mkdir -p logs
 
 # 4. Jalankan patch skema DB (WAJIB — ddl-auto=none) pada DB core/sys yang sesuai:
 #    - patch_api_login_log_status_widen.sql  (WAJIB: kolom status VARCHAR(20))
+#    - patch_dep_produk_is_custom_rate.sql   (WAJIB bila memakai deposito special rate: kolom is_custom_rate)
 #    - patch_get_next_id_atomic.sql          (disarankan; perlu review IBS lebih dulu)
 mysql -h <db-host> -u <user> -p cma < database/patches/patch_api_login_log_status_widen.sql
+mysql -h <db-host> -u <user> -p cma < database/patches/patch_dep_produk_is_custom_rate.sql
 ```
 
 ### 4.3 Build image & start service
@@ -154,6 +156,7 @@ docker compose logs -f microservicecore-app
 - [ ] Koneksi DB primary & sys OK (tidak ada error datasource di log; login mengembalikan token).
 - [ ] Koneksi Redis OK (endpoint transaksional tidak balas `503`/`90`).
 - [ ] Patch `patch_api_login_log_status_widen.sql` sudah diterapkan (login rate-limit tidak 500).
+- [ ] Patch `patch_dep_produk_is_custom_rate.sql` sudah diterapkan (registrasi deposito special rate & `GET /deposito/produk-spesial-rate` tidak 500).
 - [ ] `monitoring.api-key` terisi & cocok dengan dashboard `health-ui-mcs`.
 - [ ] Smoke test: `POST /api/v1/autentikasi/login` (dengan `X-CLIENT-ID`) → `00`, lalu satu
       inquiry saldo & satu transaksi tabungan kecil di kantor uji → `00`.
@@ -196,6 +199,7 @@ docker compose up -d
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat (metode Docker Compose + Dockerfile) |
+| 1.1.0 | 16 Juli 2026 | | Tambah patch wajib `patch_dep_produk_is_custom_rate.sql` (deposito special rate) ke langkah patch DB & checklist. |
 
 ---
 

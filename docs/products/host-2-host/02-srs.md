@@ -6,7 +6,7 @@
 |-------------------|---------------------|
 | Produk            | Host 2 Host     |
 | Jenis Dokumen     | Software Requirements Specification (SRS)         |
-| Versi             | 1.0.0               |
+| Versi             | 1.1.0               |
 | Tanggal Dibuat    | 16 Juli 2026              |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
@@ -126,7 +126,7 @@ Karakteristik arsitektural penting:
 | FR-010 | Daftar & detail nasabah WNA | Mengambil daftar (paged) & detail nasabah WNA sesuai office scope. | Sedang | BR-012 |
 | FR-011 | Registrasi & inquiry tabungan | Registrasi rekening, pencarian, inquiry saldo, daftar mutasi. | Wajib | BR-012 |
 | FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan, saldo, daftar. | Wajib | BR-012 |
-| FR-013 | Registrasi & inquiry deposito | Registrasi deposito, inquiry saldo. | Wajib | BR-012 |
+| FR-013 | Registrasi & inquiry deposito | Registrasi deposito (termasuk produk *special rate*: `sukuBunga` wajib & `jkw` 6/12), inquiry saldo, dan daftar produk *special rate* (`GET /deposito/produk-spesial-rate`). | Wajib | BR-012 |
 | FR-014 | Transaksi tabungan | Posting setoran/penarikan/transfer (tipe D1–D3, T1–T4). | Wajib | BR-006..BR-010 |
 | FR-015 | Pencairan pinjaman | Posting pencairan pinjaman (C1–C3) ke tabungan/tunai. | Wajib | BR-006..BR-010 |
 | FR-016 | Angsuran pinjaman | Posting angsuran (pokok + bunga). | Wajib | BR-006..BR-010 |
@@ -229,6 +229,7 @@ Alternative/Exception Flow:
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
+| 1.1.0 | 16 Juli 2026 | | FR-013 diperluas: registrasi deposito produk *special rate* (`sukuBunga` wajib, `jkw` 6/12) & endpoint daftar produk *special rate*. |
 
 ---
 
