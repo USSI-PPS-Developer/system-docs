@@ -11,6 +11,7 @@
 | [FDS BKK Jateng](products/fds-bkk-jateng/README.md) | 3/11 | 🟡 Berjalan |
 | [Host 2 Host](products/host-2-host/README.md) | 11/11 | ✅ Lengkap |
 | [IBS LOS BackEndCore](products/ibs-los-backendcore/README.md) | 1/11 | 🟡 Berjalan |
+| [IBS Onboarding Admin](products/ibs-onboarding-admin/README.md) | 6/11 | 🟡 Berjalan |
 | [IBS Onboarding Backend](products/ibs-onboarding-backend/README.md) | 5/11 | 🟡 Berjalan |
 
 ---
