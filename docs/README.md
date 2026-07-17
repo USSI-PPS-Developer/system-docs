@@ -13,6 +13,7 @@
 | [IBS LOS BackEndCore](products/ibs-los-backendcore/README.md) | 1/11 | 🟡 Berjalan |
 | [IBS Onboarding Admin](products/ibs-onboarding-admin/README.md) | 6/11 | 🟡 Berjalan |
 | [IBS Onboarding Backend](products/ibs-onboarding-backend/README.md) | 5/11 | 🟡 Berjalan |
+| [IBS Onboarding Mobile](products/ibs-onboarding-mobile/README.md) | 6/11 | 🟡 Berjalan |
 
 ---
 
