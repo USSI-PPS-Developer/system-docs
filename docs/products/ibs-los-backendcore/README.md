@@ -6,8 +6,8 @@
 |-----------------|-------------------|
 | Produk          | IBS LOS BackEndCore   |
 | Slug            | `ibs-los-backendcore` |
-| Kelengkapan Dok | 1/11 (9%) |
-| Terakhir update | 16 Juli 2026    |
+| Kelengkapan Dok | 5/11 (45%) |
+| Terakhir update | 17 Juli 2026    |
 
 ---
 
@@ -15,16 +15,16 @@
 
 | No | Dokumen | Status |
 |----|---------|--------|
-| 01 | 📄 BRD — Business Requirement Document | ⬜ Belum dibuat |
-| 02 | 📐 SRS — Software Requirements Specification | ⬜ Belum dibuat |
+| 01 | [📄 BRD — Business Requirement Document](01-brd.md) | 🟡 Draft |
+| 02 | [📐 SRS — Software Requirements Specification](02-srs.md) | 🟡 Draft |
 | 03 | [🔌 API Contract](03-api-contract.md) | 🟡 Draft |
-| 04 | 🗄️ Desain Database | ⬜ Belum dibuat |
+| 04 | [🗄️ Desain Database](04-database-design.md) | 🟡 Draft |
 | 05 | 🎨 Desain UI/UX | ⬜ Belum dibuat |
 | 06 | 🧪 Test Plan | ⬜ Belum dibuat |
 | 07 | ✅ Test Case | ⬜ Belum dibuat |
 | 08 | 🔗 SIT Documentation | ⬜ Belum dibuat |
 | 09 | 🧾 UAT | ⬜ Belum dibuat |
-| 10 | 🚀 Deployment Guide | ⬜ Belum dibuat |
+| 10 | [🚀 Deployment Guide](10-deployment-guide.md) | 🟡 Draft |
 | 11 | 📖 User Manual | ⬜ Belum dibuat |
 
 > Dokumen tanpa tautan belum dibuat. Generate dengan:
