@@ -424,11 +424,11 @@ via `GET /produk-spesial-rate`). Perilaku registrasi bercabang berdasarkan flag 
 
 | Kondisi | `sukuBunga` (payload) | `jkw` yang diperbolehkan | Sumber suku bunga tersimpan |
 |---------|-----------------------|--------------------------|-----------------------------|
-| **Special rate** (`is_custom_rate=1`) | **Wajib**, `> 0` | Hanya **6** atau **12** | Dari payload (`sukuBunga`) |
+| **Special rate** (`is_custom_rate=1`) | **Wajib**, `> 0` | Hanya **1**, **3**, **6**, atau **12** | Dari payload (`sukuBunga`) |
 | **Non-special** (`is_custom_rate=0`) | Diabaikan (opsional) | Sesuai aturan produk (`JKW_RULES`) | Default produk (`dep_produk`) |
 
 - `sukuBunga` tidak diisi / `≤ 0` pada produk special rate → **`03`** (`SPECIAL_RATE_REQUIRED`, HTTP 400).
-- `jkw` bukan 6/12 pada produk special rate → **`95`** (`BUSINESS_EXCEPTION`, HTTP 400).
+- `jkw` bukan 1/3/6/12 pada produk special rate → **`95`** (`BUSINESS_EXCEPTION`, HTTP 400).
 - Field selain suku bunga tetap memakai default produk (mis. `persen_pph`) pada kedua cabang.
 
 **`GET /produk-spesial-rate` — Response 200 OK**
@@ -650,6 +650,7 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | Tambah `GET /deposito/produk-spesial-rate`; registrasi deposito mendukung produk *special rate* (`sukuBunga` wajib, `jkw` 6/12); response code baru `03` (`SPECIAL_RATE_REQUIRED`). |
+| 1.1.1 | 17 Juli 2026 | | Aturan `jkw` produk *special rate* diperluas dari `6/12` menjadi **1/3/6/12** (permintaan BPR). |
 
 ---
 

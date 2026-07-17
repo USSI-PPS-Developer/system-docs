@@ -243,7 +243,7 @@ Transaksi deposito: `tgl_trans`, `no_rekening` (→`deposito`), `kode_trans`, `m
   (PK `kode_produk` V3) — master produk (suku bunga & PPh default, dll). `dep_produk`
   memiliki `is_custom_rate` `TINYINT(1)` `NOT NULL DEFAULT 0` — bila `1`, produk deposito
   memakai *special/custom rate* (registrasi mewajibkan `sukuBunga` dari payload & membatasi
-  `jkw` ke 6/12). Ditambahkan via `patch_dep_produk_is_custom_rate.sql`.
+  `jkw` ke 1/3/6/12). Ditambahkan via `patch_dep_produk_is_custom_rate.sql`.
 - `perkiraan` (PK `kode_perk` V20) — Chart of Accounts (GL); `nama_perk`, `flag_blokir`.
 - `css_jenis_debitur` (PK `kode_jenis_debitur` V1), `css_kode_agama` (PK `kode_agama`),
   `css_sumber_penghasilan`, `css_pemasukan_per_bulan` — lookup validasi registrasi nasabah.
@@ -426,6 +426,7 @@ via ABA / via CoA).
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat (dari entity JPA & DDL patch) |
 | 1.1.0 | 16 Juli 2026 | | Tambah kolom `dep_produk.is_custom_rate` (`TINYINT(1) NOT NULL DEFAULT 0`) — flag produk deposito *special rate*; patch `patch_dep_produk_is_custom_rate.sql`. |
+| 1.1.1 | 17 Juli 2026 | | Catatan aturan `jkw` produk *special rate* diperbarui `6/12` → 1/3/6/12 (tanpa perubahan skema). |
 
 ---
 
