@@ -124,6 +124,7 @@ Karakteristik arsitektural penting:
 | FR-008 | Registrasi nasabah | Membuat CIF nasabah baru dengan validasi lengkap (NIK 16 digit, email, dsb.). | Wajib | BR-012 |
 | FR-009 | Update & portofolio nasabah | Memperbarui data nasabah & menampilkan portofolio (TAB/DEP/KRE). | Tinggi | BR-012 |
 | FR-010 | Daftar & detail nasabah WNA | Mengambil daftar (paged) & detail nasabah WNA sesuai office scope. | Sedang | BR-012 |
+| FR-010a | Upload foto & tanda tangan nasabah | Menyimpan foto dan/atau tanda tangan nasabah existing (`POST /nasabah/upload-media`); payload base64 → kolom LONGBLOB, minimal satu media, field kosong tidak menimpa data lama, office-scoped. | Sedang | BR-012 |
 | FR-011 | Registrasi & inquiry tabungan | Registrasi rekening, pencarian, inquiry saldo, daftar mutasi. | Wajib | BR-012 |
 | FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan, saldo, daftar. | Wajib | BR-012 |
 | FR-013 | Registrasi & inquiry deposito | Registrasi deposito (termasuk produk *special rate*: `sukuBunga` wajib & `jkw` 1/3/6/12), inquiry saldo, dan daftar produk *special rate* (`GET /deposito/produk-spesial-rate`). | Wajib | BR-012 |

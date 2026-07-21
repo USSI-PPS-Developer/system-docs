@@ -93,6 +93,7 @@ Seluruh endpoint bisnis mengembalikan envelope `ApiResponse<T>`:
 | 11 | `POST` | `/wna/cek-identitas` | Validasi identitas nasabah WNA. |
 | 12 | `GET`  | `/wna/{nasabahId}` | Detail nasabah WNA. |
 | 13 | `GET`  | `/wna/list` | Daftar nasabah WNA (paged, office-scoped). |
+| 13a | `POST` | `/upload-media` | Upload foto & tanda tangan nasabah (base64 → LONGBLOB). |
 
 ### 3.3 Tabungan — `/api/v1/tabungan`
 | No | Method | Endpoint | Deskripsi |
@@ -370,6 +371,29 @@ data nasabah (`CheckNikProjection` / `CheckIdentitasProjection` / `CheckIdentita
 - **List:** query `startDate`, `endDate` (ISO date), `page` (default 0), `size` (default 20);
   response `Page<NasabahWnaListResponseDTO>` (tanpa foto/ttd). Scope: `officeScopeForList(token)`
   (kantor sendiri; HQ = semua; token tanpa office = ditolak). *(Tidak perlu idempotency.)*
+
+---
+
+### 4.9a `POST /api/v1/nasabah/upload-media`
+
+Menyimpan **foto** dan/atau **tanda tangan** nasabah existing (by `nasabahId`) ke kolom LONGBLOB
+legacy core. Payload dikirim sebagai base64.
+
+**Request Body**
+```json
+{ "nasabahId": "N0001", "photo": "<base64>", "tandatangan": "<base64>", "userId": "U001" }
+```
+
+- `photo` dan `tandatangan` **opsional secara individual, tetapi minimal salah satu harus diisi**
+  (jika keduanya kosong → `95` / `BUSINESS_EXCEPTION`, "Minimal salah satu dari photo atau tandatangan harus diisi").
+- Field yang **tidak dikirim tidak menimpa** data existing (upload foto saja mempertahankan ttd lama).
+- base64 tidak valid → `95` / `BUSINESS_EXCEPTION` ("Format base64 tidak valid untuk photo|tandatangan").
+- Ukuran maksimal **2 MB** per media (photo & tandatangan); lebih besar → `02` / `VALIDATION_ERROR`.
+- Header: `Authorization` (Bearer), `X-IDEMPOTENCY-KEY` (wajib). Rate limit 5/60s.
+- Guard: `assertNasabahOffice(nasabahId)` — office-scoped (media KYC bersifat sensitif).
+- **Response** `ApiResponse<{ nasabahId }>`, kode `00` "Upload photo & tanda tangan nasabah sukses".
+
+> Foto/ttd dibaca kembali dalam bentuk base64 via `GET /wna/{nasabahId}` (`NasabahWnaDetailResponseDTO`).
 
 ---
 

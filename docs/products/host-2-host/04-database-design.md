@@ -195,8 +195,13 @@ Kolom kunci: `nama_nasabah`, `alamat`, `hp`, `jenis_kelamin`(L/P), `tempatlahir`
 `propinsi`, `kota_kab`, `kecamatan`, `desa`, `kodepos`, `email`, `negara_domisili`,
 `status_marital`, `slik_kode_negara`, `kode_group1..3`, `npwp`, `mata_uang`,
 `status_tempat_tinggal`, `alamat_surat`, `kode_sumber_penghasilan`,
-`kode_pemasukan_per_bulan`, `nama_kantor`, `alamat_kantor`. *(patch: `patch_nasabah_table.sql`
+`kode_pemasukan_per_bulan`, `nama_kantor`, `alamat_kantor`, serta media KYC
+**`photo`** & **`tandatangan`** (`LONGBLOB`, legacy IBS). *(patch: `patch_nasabah_table.sql`
 menambah `mata_uang` & `status_tempat_tinggal`.)*
+> **Konvensi media LONGBLOB.** `photo`/`tandatangan` dipertukarkan dengan client dalam bentuk
+> **base64**: di-*decode* saat tulis (`POST /nasabah/upload-media`) dan di-*encode* saat baca
+> (`GET /nasabah/wna/{nasabahId}`). Format penyimpanan LONGBLOB tidak diubah (coupling legacy IBS).
+> Kolom sudah ada di skema — tidak ada patch DB baru untuk fitur upload media.
 
 #### `tabung` (entity `Tabung`) — PK `no_rekening` `VARCHAR(20)`
 Kolom kunci: `nasabah_id` (FK→`nasabah`), `kode_produk` (→`tab_produk`), `suku_bunga`,
