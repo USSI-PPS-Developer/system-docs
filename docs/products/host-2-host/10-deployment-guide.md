@@ -6,7 +6,7 @@
 |-------------------|---------------------|
 | Produk            | Host 2 Host     |
 | Jenis Dokumen     | Deployment Guide         |
-| Versi             | 1.1.0               |
+| Versi             | 1.2.0               |
 | Tanggal Dibuat    | 16 Juli 2026              |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
@@ -99,6 +99,16 @@ sehingga file eksternal menimpa nilai default. **Isi secret di sini, bukan di da
 
 ## 4. Langkah Deployment
 
+Ada dua metode yang didukung:
+
+| Metode | Kapan dipakai | Yang dibutuhkan di server |
+|--------|---------------|---------------------------|
+| **A — build di server** (§4.1–§4.3) | Server punya JDK/Maven + source code (mis. staging internal) | JDK 17, Maven/wrapper, source, Docker |
+| **B — build lokal, server run-only** (§4.4) | **Deploy produksi ke server BPR** (default) | Hanya Docker + Docker Compose |
+
+> Panduan operasional lengkap untuk Metode B (langkah per langkah, isi file, rollback,
+> troubleshooting) ada di **`DEPLOY.md`** pada repo `microservice-core`.
+
 ### 4.1 Build artifact
 ```bash
 # 1. Ambil source terbaru
@@ -146,6 +156,79 @@ docker compose logs -f microservicecore-app
 > `--spring.config.location=classpath:/,file:/config/application.properties`.
 > Karena image menyalin jar dari `target/`, **build Maven (§4.1) harus dijalankan lebih dulu**
 > sebelum `docker compose up --build`.
+
+### 4.4 Metode B — build lokal, server run-only (produksi BPR)
+
+Jar dibangun di mesin developer lalu dikirim ke server; server **tidak** melakukan build image
+(tidak perlu JDK, Maven, source, maupun `docker compose build`). Container memakai image resmi
+`eclipse-temurin:17-jre-alpine` dengan jar & konfigurasi **di-mount** dari host.
+
+**Struktur direktori server** (contoh user `apih2h`):
+
+```
+/home/apih2h/
+├── docker-compose.yml           # tanpa "build:" — hanya image + volumes
+├── application.properties       # secret produksi (chmod 600) → /config/application.properties
+├── app/
+│   ├── app.jar                  # jar yang sedang berjalan
+│   └── releases/app-<STAMP>.jar # arsip per rilis untuk rollback
+└── logs/                        # → /app/logs
+```
+
+**Inti `docker-compose.yml` server:**
+
+```yaml
+services:
+  redis:
+    image: redis:6.2
+    container_name: apih2h-redis
+    networks: [app_net]
+    restart: always
+  app:
+    image: eclipse-temurin:17-jre-alpine
+    container_name: apih2h-app
+    working_dir: /app
+    environment: [TZ=Asia/Jakarta]
+    command: ["java","-XX:MaxRAMPercentage=75.0","-jar","/app/app.jar",
+              "--spring.config.location=classpath:/,file:/config/application.properties"]
+    volumes:
+      - ./app/app.jar:/app/app.jar:ro
+      - ./application.properties:/config/application.properties:ro
+      - ./logs:/app/logs
+    ports: ["8080:8080"]
+    depends_on: [redis]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: always
+    networks: [app_net]
+networks:
+  app_net: { driver: bridge }
+```
+
+**Alur rilis:**
+
+```bash
+# [LAPTOP]
+make test && make build                       # → target/microservicecore.jar
+STAMP=$(date +%Y%m%d-%H%M)
+shasum -a 256 target/microservicecore.jar
+scp target/microservicecore.jar apih2h@<ip-server>:/home/apih2h/app/releases/app-$STAMP.jar
+
+# [SERVER]
+cd /home/apih2h
+sha256sum app/releases/app-$STAMP.jar          # cocokkan dengan checksum di laptop
+# jalankan patch DB baru (bila ada) lebih dulu — lihat §4.2/§5
+cp app/releases/app-$STAMP.jar app/app.jar
+docker compose restart app                     # downtime ± 20–40 detik
+curl -s http://localhost:8080/actuator/health
+```
+
+**Catatan penting:**
+- Promosi jar memakai `cp`, **bukan symlink** — symlink pada bind mount tidak terbaca dari dalam container.
+- `spring.data.redis.host` **wajib** `redis` (nama service compose), bukan `localhost`.
+- `<db-host>` tidak boleh `localhost`/`127.0.0.1` (itu menunjuk ke dalam container) — pakai IP DB
+  atau `host.docker.internal` (disediakan lewat `extra_hosts`).
+- **Rollback** = kembalikan jar lama: `cp app/releases/app-<STAMP-LAMA>.jar app/app.jar && docker compose restart app`.
+- Bila hanya konfigurasi yang berubah: edit `application.properties` → `docker compose restart app`.
 
 ## 5. Verifikasi Pasca-Deploy
 
@@ -200,6 +283,7 @@ docker compose up -d
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat (metode Docker Compose + Dockerfile) |
 | 1.1.0 | 16 Juli 2026 | | Tambah patch wajib `patch_dep_produk_is_custom_rate.sql` (deposito special rate) ke langkah patch DB & checklist. |
+| 1.2.0 | 30 Juli 2026 | | Tambah Metode B — build lokal, server run-only (jar & config di-mount ke image `eclipse-temurin:17-jre-alpine`, tanpa build di server) beserta struktur `/home/apih2h`, alur rilis, dan rollback via arsip `app/releases/`. Rujukan detail: `DEPLOY.md` di repo `microservice-core`. |
 
 ---
 
