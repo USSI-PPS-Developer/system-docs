@@ -15,6 +15,7 @@
 | [IBS Onboarding Admin](products/ibs-onboarding-admin/README.md) | 6/11 | 🟡 Berjalan |
 | [IBS Onboarding Backend](products/ibs-onboarding-backend/README.md) | 5/11 | 🟡 Berjalan |
 | [IBS Onboarding Mobile](products/ibs-onboarding-mobile/README.md) | 6/11 | 🟡 Berjalan |
+| [Mobile Branchless](products/mobile-branchless/README.md) | 3/11 | 🟡 Berjalan |
 
 ---
 
@@ -23,4 +24,4 @@
 analyst new product "Nama Produk"
 ```
 
-*Terakhir diperbarui: 30 Juli 2026*
+*Terakhir diperbarui: 31 Juli 2026*
