@@ -6,7 +6,7 @@
 |-------------------|---------------------|
 | Produk            | Host 2 Host     |
 | Jenis Dokumen     | Deployment Guide         |
-| Versi             | 1.2.0               |
+| Versi             | 1.3.0               |
 | Tanggal Dibuat    | 16 Juli 2026              |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
@@ -72,10 +72,10 @@ sehingga file eksternal menimpa nilai default. **Isi secret di sini, bukan di da
 
 | Grup | Kunci | Contoh | Keterangan |
 |------|-------|--------|------------|
-| DB Primary (`cma`) | `spring.datasource.jdbc-url` | `jdbc:mysql://<db-host>:3306/cma` | Core banking IBS. |
+| DB Primary (`cma`) | `spring.datasource.jdbc-url` | `jdbc:mysql://<db-host>:3306/cma?connectionTimeZone=Asia/Jakarta` | Core banking IBS. `connectionTimeZone` wajib — lihat §3.3. |
 | | `spring.datasource.username` / `password` | `***` | Kredensial DB core. |
 | | `spring.datasource.driver-class-name` | `com.mysql.cj.jdbc.Driver` | |
-| DB Sys (`cma_sys`) | `sys.datasource.jdbc-url` | `jdbc:mysql://<db-host>:3306/cma_sys` | DB user/sistem. |
+| DB Sys (`cma_sys`) | `sys.datasource.jdbc-url` | `jdbc:mysql://<db-host>:3306/cma_sys?connectionTimeZone=Asia/Jakarta` | DB user/sistem. |
 | | `sys.datasource.username` / `password` | `***` | Kredensial DB sys. |
 | Redis | `spring.data.redis.host` | `redis` | **Nama service compose**, bukan `localhost`. |
 | | `spring.data.redis.port` | `6379` | |
@@ -84,6 +84,9 @@ sehingga file eksternal menimpa nilai default. **Isi secret di sini, bukan di da
 | Monitoring | `monitoring.api-key` | `***` | **Wajib diisi** — bila kosong `/api/monitoring/**` ditolak (fail-closed). Harus sama dengan `API_MONITORING_KEY` di dashboard `health-ui-mcs`. |
 | Rekap | `rekap.admin-user-ids` | `U001,U050` | Allowlist user_id HQ/admin. Kosong = semua akses rekap ditolak. |
 | Isolasi | `isolation.hq-user-ids` | `U001` | Allowlist user_id yang bypass tenant isolation. Kosong = tidak ada HQ. |
+| Timezone | `app.timezone` | `Asia/Jakarta` | Timezone default JVM (WIB). Menentukan tanggal transaksi. Zona tidak valid = aplikasi **gagal start**. Lihat §3.3. |
+| | `spring.jackson.time-zone` | `Asia/Jakarta` | Serialisasi tanggal di response JSON. |
+| | `spring.jpa.properties.hibernate.jdbc.time_zone` | `Asia/Jakarta` | Zona timestamp JDBC dari Hibernate. |
 | Aktuator | `management.endpoints.web.exposure.include` | `health` | Hanya `health` yang diekspos. |
 | | `management.endpoint.health.show-details` | `when-authorized` | Jangan set `always` pada probe publik. |
 | Log | `logging.file.name` | `logs/microservicecore.log` | Volume `./logs` di-mount ke `/app/logs`. |
@@ -95,7 +98,30 @@ sehingga file eksternal menimpa nilai default. **Isi secret di sini, bukan di da
 ### 3.2 Environment variable container
 | Variabel | Contoh | Keterangan |
 |----------|--------|------------|
-| `TZ` | `Asia/Jakarta` | Timezone container (disetel di compose). |
+| `TZ` | `Asia/Jakarta` | Timezone container (disetel di compose). Jam log & OS. |
+
+### 3.3 Timezone (WIB) — wajib seragam
+
+Seluruh tanggal/jam bisnis (`tgl_trans`, `tgl_register`, `api_log.created_at`) dibentuk dari waktu
+lokal JVM, **bukan** UTC. Kalau JVM berjalan di UTC, transaksi pukul 06:00 WIB tercatat pada
+**tanggal sebelumnya** (H-1) dan jam di log/`api_log` tidak sama dengan jam MySQL.
+
+Aplikasi menyetel sendiri timezone default JVM dari properti `app.timezone` pada saat startup
+(sebelum koneksi DB dibuat), jadi tidak lagi bergantung pada `TZ` / `-Duser.timezone` yang mudah
+terlupa. Nilai zona yang salah tulis membuat aplikasi **gagal start** — bukan diam-diam memakai GMT.
+
+**Aturan:** empat nilai berikut harus memakai zona yang sama (`Asia/Jakarta`):
+
+| Tempat | Nilai |
+|--------|-------|
+| `application.properties` | `app.timezone=Asia/Jakarta` |
+| `application.properties` | `spring.jpa.properties.hibernate.jdbc.time_zone=Asia/Jakarta` |
+| `jdbc-url` (primary **dan** sys) | `?connectionTimeZone=Asia/Jakarta` |
+| compose | `TZ=Asia/Jakarta` (+ `-Duser.timezone=Asia/Jakarta` pada `command`) |
+
+Bila salah satu berbeda → jam bergeser tepat 7 jam (konversi ganda) atau tanggal transaksi meleset.
+Pastikan juga server MySQL berjalan di WIB: `SELECT NOW(), @@global.time_zone;`.
+Verifikasi container: `docker compose exec app sh -c 'date'` → harus menunjukkan waktu WIB (+07).
 
 ## 4. Langkah Deployment
 
@@ -241,6 +267,9 @@ curl -s http://localhost:8080/actuator/health
 - [ ] Patch `patch_api_login_log_status_widen.sql` sudah diterapkan (login rate-limit tidak 500).
 - [ ] Patch `patch_dep_produk_is_custom_rate.sql` sudah diterapkan (registrasi deposito special rate & `GET /deposito/produk-spesial-rate` tidak 500).
 - [ ] `monitoring.api-key` terisi & cocok dengan dashboard `health-ui-mcs`.
+- [ ] Timezone WIB (§3.3): `docker compose exec app sh -c 'date'` menunjukkan +07, timestamp di
+      `logs/microservicecore.log` sesuai jam setempat, dan `api_log.created_at` untuk request uji
+      sama dengan jam transaksi (tidak bergeser 7 jam / tidak jatuh ke H-1).
 - [ ] Smoke test: `POST /api/v1/autentikasi/login` (dengan `X-CLIENT-ID`) → `00`, lalu satu
       inquiry saldo & satu transaksi tabungan kecil di kantor uji → `00`.
 
@@ -283,6 +312,7 @@ docker compose up -d
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat (metode Docker Compose + Dockerfile) |
 | 1.1.0 | 16 Juli 2026 | | Tambah patch wajib `patch_dep_produk_is_custom_rate.sql` (deposito special rate) ke langkah patch DB & checklist. |
+| 1.3.0 | 4 Agustus 2026 | | Tambah §3.3 Timezone (WIB) — properti `app.timezone` (default `Asia/Jakarta`) disetel aplikasi saat startup, `spring.jackson.time-zone` & `hibernate.jdbc.time_zone`, serta `connectionTimeZone` pada kedua `jdbc-url`; aturan "empat nilai harus seragam", checklist verifikasi timezone. Zona tidak valid = gagal start. |
 | 1.2.0 | 30 Juli 2026 | | Tambah Metode B — build lokal, server run-only (jar & config di-mount ke image `eclipse-temurin:17-jre-alpine`, tanpa build di server) beserta struktur `/home/apih2h`, alur rilis, dan rollback via arsip `app/releases/`. Rujukan detail: `DEPLOY.md` di repo `microservice-core`. |
 
 ---
