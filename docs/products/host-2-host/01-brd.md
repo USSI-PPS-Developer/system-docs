@@ -114,6 +114,10 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
 | BR-016 | Kegagalan Redis (idempotency/rate-limit) harus **fail-closed** (tolak, jangan lolos). | Wajib | → HTTP 503, ditolak sebelum posting uang. |
 | BR-017 | Kesalahan internal **tidak boleh membocorkan** detail DB/SQL ke klien. | Wajib | Pesan generik ke klien; detail hanya di log server. |
 | BR-018 | Seluruh endpoint harus terdokumentasi (OpenAPI/Swagger). | Sedang | `/swagger-ui.html`. |
+| BR-019 | Saldo minimum rekening tabungan dapat mengikuti **campaign** (mis. bebas saldo minimum = 0) menggantikan default produk. | Wajib | Campaign adalah **master data yang disetujui bank** (`api_tab_campaign`: produk, kantor, periode, `no_memo` persetujuan) — **bukan** flag pada payload. Berlaku untuk rekening baru maupun existing. |
+| BR-020 | Nilai saldo minimum **tidak boleh ditentukan oleh aplikasi konsumen**. | Wajib | Nilai selalu diturunkan sistem dari campaign atau default produk; payload tidak memiliki field nominal. Konsumen hanya merujuk campaign yang sudah disetujui. |
+| BR-021 | Setiap perubahan saldo minimum rekening wajib meninggalkan **jejak audit lengkap** (nilai asal → nilai baru, pelaku, waktu, alasan, dasar campaign). | Wajib | Ditulis ke `api_tab_minimum_change` dalam **satu transaksi** dengan perubahan rekeningnya, bersifat *append-only* → perubahan selalu dapat dibuktikan dan dibalikkan. |
+| BR-022 | Perubahan saldo minimum via API hanya boleh dilakukan **pejabat/supervisor yang ditunjuk**. | Wajib | Keputusan BPR: alur API **tanpa maker-checker** (berbeda dengan otorisasi backoffice CBS); kontrol pengganti = allowlist `tabung.minimum-editor-user-ids` (fail-closed bila kosong) + jejak audit BR-021. |
 
 ## 6. Proses Bisnis
 
@@ -154,7 +158,7 @@ uang.
   - Redis tersedia untuk idempotency & rate limiting; MySQL core & sys tersedia.
 - **Batasan:**
   - Harus terintegrasi dengan **Core Banking IBS** melalui **dua datasource** terpisah
-    (`primary` = `cma`, `sys` = `cma_sys`); satu transaksi DB tidak boleh melintasi kedua
+    (`primary` = `dbcore`, `sys` = `dbcore_sys`); satu transaksi DB tidak boleh melintasi kedua
     datasource.
   - `spring.jpa.hibernate.ddl-auto=none` — perubahan skema DB dikirim sebagai patch SQL
     manual, bukan auto-generate.
@@ -175,6 +179,8 @@ uang.
 | RB-006 | Kebocoran detail internal (SQL/tabel) via pesan error | Information disclosure | Handler mengembalikan pesan generik; detail hanya di log server. |
 | RB-007 | Perubahan skema IBS merusak integrasi | Downtime layanan | Kontrak API stabil + patch SQL manual yang di-review IBS lebih dulu. |
 | RB-008 | Brute-force login | Pengambilalihan akun | Throttle 5x/60s per (username+IP) sebelum verifikasi password. |
+| RB-009 | Saldo minimum diturunkan tanpa dasar/otorisasi (alur API tanpa maker-checker) → dana yang dapat ditarik naik | Kerugian finansial, temuan audit | Nilai hanya dari campaign yang disetujui (bukan dari payload) + allowlist `tabung.minimum-editor-user-ids` (fail-closed) + jejak audit `api_tab_minimum_change` dalam satu transaksi (dapat dibuktikan & dibalikkan) + office scope `assertTabungOffice`. |
+| RB-010 | Campaign kedaluwarsa tetapi rekening tetap bebas saldo minimum | Pendapatan/kebijakan produk tidak tertagih | Campaign punya `tgl_mulai`/`tgl_akhir` (registrasi otomatis kembali ke default setelah periode habis); rekening existing dikembalikan dengan aksi `DEFAULT_PRODUK` — nilai asal tersimpan di `api_tab_minimum_change.minimum_lama`. |
 
 ## 9. Kriteria Penerimaan (Acceptance Criteria)
 
@@ -189,6 +195,14 @@ uang.
 - Kegagalan Redis mengembalikan HTTP 503 dan tidak ada posting uang yang terjadi.
 - Log `api_log` tidak memuat nilai password/token dalam bentuk plaintext.
 - Seluruh endpoint tampil & dapat dicoba melalui Swagger UI.
+- Registrasi tabungan pada periode campaign aktif menghasilkan rekening dengan saldo minimum
+  sesuai campaign (mis. 0) **tanpa perubahan payload** dari aplikasi konsumen; di luar periode
+  campaign kembali memakai default produk.
+- Setiap perubahan saldo minimum rekening existing menghasilkan tepat satu baris
+  `api_tab_minimum_change` berisi nilai asal, nilai baru, pelaku, waktu, alasan, dan dasar
+  campaign; request dengan nilai yang sama tidak menghasilkan baris audit.
+- Pengguna di luar allowlist `tabung.minimum-editor-user-ids` ditolak (403) saat mencoba
+  mengubah saldo minimum; allowlist kosong = semua ditolak.
 
 ---
 
@@ -198,6 +212,7 @@ uang.
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | Ruang lingkup deposito diperluas: produk *special rate* (suku bunga kustom) & daftar produknya. |
+| 1.2.0 | 5 Agustus 2026 | | Nama database dibuat generik: `cma`/`cma_sys` → **`dbcore`/`dbcore_sys`** (nama skema spesifik lembaga tidak dipakai di dokumen yang di-deliver ke klien). Campaign **bebas saldo minimum** tabungan (permintaan BPR Sentosa): BR-019..BR-022 (campaign sebagai master data yang disetujui, nilai tidak dari payload, jejak audit wajib, allowlist pengganti maker-checker), risiko RB-009/RB-010, dan kriteria penerimaan terkait. |
 
 ---
 

@@ -66,16 +66,16 @@ berada di antara aplikasi konsumen dan Core Banking IBS.
 
 ```
 [Kanal & Partner]  →  [H2H REST API (microservice-core)]  →  [Core Banking IBS]
-   (client_id)          - autentikasi JWT per-klien            ├─ DB primary (cma)
-                        - idempotency & rate limit (Redis)     └─ DB sys (cma_sys)
+   (client_id)          - autentikasi JWT per-klien            ├─ DB primary (dbcore)
+                        - idempotency & rate limit (Redis)     └─ DB sys (dbcore_sys)
                         - tenant isolation (kode_kantor)
                         - posting transaksi @Transactional
                         - audit/monitoring (api_log)
 ```
 
 Karakteristik arsitektural penting:
-- **Dual datasource**: DB **primary** (`cma`, core banking, `@Primary`) dan DB **sys**
-  (`cma_sys`, sistem/user). Satu transaksi DB tidak melintasi kedua datasource.
+- **Dual datasource**: DB **primary** (`dbcore`, core banking, `@Primary`) dan DB **sys**
+  (`dbcore_sys`, sistem/user). Satu transaksi DB tidak melintasi kedua datasource.
 - **Multi-tenant signing**: tidak ada satu secret JWT global; secret & expiry diambil per
   `client_id` dari tabel `api_auth_config`.
 - **Redis** untuk idempotency & rate limiting (fail-closed bila down).
@@ -103,7 +103,7 @@ Karakteristik arsitektural penting:
 
 ### 2.4 Batasan & Asumsi
 - Bahasa/platform: **Java 17**, **Spring Boot 3.3.13**, Maven; JWT via `jjwt` 0.11.5 (HS256).
-- Datastore: **MySQL** (dual datasource primary `cma` & sys `cma_sys`), **Redis**.
+- Datastore: **MySQL** (dual datasource primary `dbcore` & sys `dbcore_sys`), **Redis**.
 - `spring.jpa.hibernate.ddl-auto=none` — skema dikelola eksternal via patch SQL manual.
 - `user_web_password` tetap **SHA1** (dibagi dengan legacy IBS — tidak boleh diubah).
 - Otorisasi berbasis kepemilikan diri (`user_id`) + allowlist HQ/admin; belum ada RBAC penuh.
@@ -125,7 +125,8 @@ Karakteristik arsitektural penting:
 | FR-009 | Update & portofolio nasabah | Memperbarui data nasabah & menampilkan portofolio (TAB/DEP/KRE). | Tinggi | BR-012 |
 | FR-010 | Daftar & detail nasabah WNA | Mengambil daftar (paged) & detail nasabah WNA sesuai office scope. | Sedang | BR-012 |
 | FR-010a | Upload foto & tanda tangan nasabah | Menyimpan foto dan/atau tanda tangan nasabah existing (`POST /nasabah/upload-media`); payload base64 → kolom LONGBLOB, minimal satu media, field kosong tidak menimpa data lama, office-scoped. | Sedang | BR-012 |
-| FR-011 | Registrasi & inquiry tabungan | Registrasi rekening, pencarian, inquiry saldo, daftar mutasi. | Wajib | BR-012 |
+| FR-011 | Registrasi & inquiry tabungan | Registrasi rekening, pencarian, inquiry saldo, daftar mutasi. Saldo minimum rekening baru diambil dari campaign yang berlaku (bila ada), jika tidak dari default produk. | Wajib | BR-012, BR-019 |
+| FR-011a | Update saldo minimum tabungan (campaign) | Mengubah saldo minimum rekening **existing** (`POST /tabungan/update-saldo-minimum`): `aksi=CAMPAIGN` (nilai dari master campaign, mis. 0) atau `aksi=DEFAULT_PRODUK` (kembali ke default produk). Payload **tanpa field nominal**; wajib `alasan`; setiap perubahan merekam nilai asal & baru ke `api_tab_minimum_change`; hanya user pada allowlist `tabung.minimum-editor-user-ids`; office-scoped. | Wajib | BR-019..BR-022 |
 | FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan, saldo, daftar. | Wajib | BR-012 |
 | FR-013 | Registrasi & inquiry deposito | Registrasi deposito (termasuk produk *special rate*: `sukuBunga` wajib & `jkw` 1/3/6/12), inquiry saldo, dan daftar produk *special rate* (`GET /deposito/produk-spesial-rate`). | Wajib | BR-012 |
 | FR-014 | Transaksi tabungan | Posting setoran/penarikan/transfer (tipe D1–D3, T1–T4). | Wajib | BR-006..BR-010 |
@@ -165,6 +166,28 @@ Karakteristik arsitektural penting:
   refresh token di `api_refresh_tokens` → catat `api_login_log`.
 - **Output:** `{ user: LoginResponseDTO, access_token, refresh_token }`, envelope `00`.
 - **Aturan validasi:** `client_id` harus terdaftar/aktif; kredensial cocok; header wajib ada.
+
+### Detail FR-011a (Update Saldo Minimum Tabungan — campaign)
+- **Pemicu:** `POST /api/v1/tabungan/update-saldo-minimum` (Bearer access token + `X-IDEMPOTENCY-KEY`).
+- **Input:** `UpdateSaldoMinimumRequestDTO` — `noRekening`, `aksi` (`CAMPAIGN` | `DEFAULT_PRODUK`),
+  `kodeCampaign` (wajib bila `aksi=CAMPAIGN`), `alasan` (wajib, ≤255), `userId`.
+  **Tidak ada field nominal** — nilai saldo minimum diturunkan sistem (BR-020).
+- **Proses:** validasi token → `user_id` token == `userId` → **allowlist**
+  `tabung.minimum-editor-user-ids` (else 403) → `X-IDEMPOTENCY-KEY` wajib (else `97`) → reservasi
+  atomik (else `93`) → rate limit 5/60s (else `94`) → `TenantGuard.assertTabungOffice(noRekening)` →
+  satu transaksi: lock baris rekening (pessimistic write) → baca `minimum` saat ini →
+  tentukan nilai baru (campaign / default produk) → UPDATE `tabung.minimum` → INSERT
+  `api_tab_minimum_change` (nilai asal, nilai baru, aksi, campaign, alasan, pelaku, waktu).
+- **Output:** `UpdateSaldoMinimumResponseDTO` — `noRekening`, `kodeCampaign`, `minimumLama`,
+  `minimumBaru`, `berubah`.
+- **Aturan validasi:** rekening harus ada; campaign harus ada, aktif, dalam periode
+  `tgl_mulai`–`tgl_akhir`, dan cocok produk serta kantor rekening (kantor `NULL` = semua kantor) —
+  jika tidak → `95` dan rekening tidak diubah. Nilai baru sama dengan nilai lama = **no-op**
+  (`berubah=false`, tanpa UPDATE dan tanpa baris audit). Perubahan dan baris audit selalu dalam
+  satu transaksi (BR-021).
+- **Catatan otorisasi:** berbeda dengan backoffice CBS, alur ini **tanpa maker-checker** (keputusan
+  BPR). Kontrol pengganti: nilai server-side, allowlist pemanggil, dan jejak audit yang dapat
+  dibuktikan/dibalikkan (BR-022, RB-009).
 
 ### Detail FR-019 (Reversal)
 - **Pemicu:** `POST /api/v1/transaksi/reversal` (Bearer + `X-IDEMPOTENCY-KEY`).
@@ -221,7 +244,7 @@ Alternative/Exception Flow:
   langsung; dashboard monitoring adalah aplikasi terpisah (`health-ui-mcs`).
 - **Antarmuka Sistem/API:** lihat [API Contract](03-api-contract.md) — seluruh endpoint REST.
 - **Antarmuka Data:** lihat [Desain Database](04-database-design.md) — dual datasource MySQL
-  (`cma`, `cma_sys`) + Redis.
+  (`dbcore`, `dbcore_sys`) + Redis.
 
 ---
 
@@ -232,6 +255,7 @@ Alternative/Exception Flow:
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | FR-013 diperluas: registrasi deposito produk *special rate* (`sukuBunga` wajib, `jkw` 6/12) & endpoint daftar produk *special rate*. |
 | 1.1.1 | 17 Juli 2026 | | FR-013: aturan `jkw` produk *special rate* diperluas dari `6/12` menjadi 1/3/6/12 (permintaan BPR). |
+| 1.2.0 | 5 Agustus 2026 | | Nama database dibuat generik: `cma`/`cma_sys` → **`dbcore`/`dbcore_sys`** (nama skema spesifik lembaga tidak dipakai di dokumen yang di-deliver ke klien). FR-011 diperluas (saldo minimum rekening baru mengikuti campaign) & FR-011a baru: update saldo minimum rekening existing via campaign + jejak audit `api_tab_minimum_change`, allowlist `tabung.minimum-editor-user-ids`, tanpa maker-checker (permintaan BPR Sentosa). |
 
 ---
 

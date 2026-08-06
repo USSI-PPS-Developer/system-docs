@@ -23,8 +23,13 @@ single default datasource):
 
 | Datasource | Skema | Prefix config | Isi | Package entity |
 |------------|-------|---------------|-----|----------------|
-| **Primary** (`@Primary`) | `cma` | `spring.datasource` | Core Banking IBS: nasabah, tabungan, kredit, deposito, transaksi + tabel infrastruktur H2H (`api_*`) | `models.primary` |
-| **Sys** | `cma_sys` | `sys.datasource` | Sistem/pengguna: `sys_daftar_user`, `sys_mysysid` | `models.sys` |
+| **Primary** (`@Primary`) | `dbcore` | `spring.datasource` | Core Banking IBS: nasabah, tabungan, kredit, deposito, transaksi + tabel infrastruktur H2H (`api_*`) | `models.primary` |
+| **Sys** | `dbcore_sys` | `sys.datasource` | Sistem/pengguna: `sys_daftar_user`, `sys_mysysid` | `models.sys` |
+
+> ℹ️ **Nama skema `dbcore` / `dbcore_sys` bersifat generik** — nama database sebenarnya berbeda di
+> tiap lembaga dan hanya ditentukan pada `jdbc-url` masing-masing datasource (tidak ada nama
+> database yang di-hardcode di dalam kode/query). Di seluruh dokumen ini, `dbcore` = database
+> primary/core banking dan `dbcore_sys` = database sistem/pengguna.
 
 Catatan penting:
 - **`spring.jpa.hibernate.ddl-auto=none`** — skema **tidak** di-generate Hibernate. DDL
@@ -42,7 +47,7 @@ Catatan penting:
 
 ## 1. Daftar Tabel
 
-### 1.1 Milik H2H — DB Primary (`cma`)
+### 1.1 Milik H2H — DB Primary (`dbcore`)
 | No | Nama Tabel | Deskripsi |
 |----|-----------|-----------|
 | 1 | `api_auth_config` | Konfigurasi autentikasi per `client_id` (secret & masa berlaku token). |
@@ -52,31 +57,33 @@ Catatan penting:
 | 5 | `api_transaction_log` | Log transaksi (untuk cek status & reversal). |
 | 6 | `api_integration` | Referensi tipe integrasi transaksi + pemetaan kode perkiraan. |
 | 7 | `api_binding_bank` | Referensi kode binding bank (rekening ABA antar-bank). |
+| 8 | `api_tab_campaign` | Master campaign saldo minimum tabungan (mis. bebas saldo minimum = 0). |
+| 9 | `api_tab_minimum_change` | Jejak audit perubahan `tabung.minimum` (nilai asal → nilai baru). |
 
-### 1.2 Berbagi dengan Core Banking IBS — DB Primary (`cma`)
+### 1.2 Berbagi dengan Core Banking IBS — DB Primary (`dbcore`)
 | No | Nama Tabel | Deskripsi |
 |----|-----------|-----------|
-| 8 | `nasabah` | Data nasabah (CIF). |
-| 9 | `tabung` | Rekening tabungan. |
-| 10 | `tabtrans` | Transaksi tabungan (mutasi). |
-| 11 | `kredit` | Rekening pinjaman/kredit. |
-| 12 | `kretrans` | Transaksi kredit (pencairan/angsuran). |
-| 13 | `deposito` | Rekening deposito. |
-| 14 | `deptrans` | Transaksi deposito. |
-| 15 | `transaksi_master` | Header jurnal GL (ditulis saat posting transaksi). |
-| 16 | `transaksi_detail` | Baris jurnal GL (debet/kredit per akun; `master_id`→`transaksi_master`). |
-| 17 | `tab_produk` / `kre_produk` / `dep_produk` | Master produk tabungan / kredit / deposito. |
-| 18 | `tab_integrasi` / `kre_integrasi` / `dep_integrasi` | Pemetaan kode integrasi per modul ke kode perkiraan GL. |
-| 19 | `perkiraan` | Bagan akun (Chart of Accounts / kode perkiraan GL). |
-| 20 | `css_jenis_debitur`, `css_kode_agama`, `css_sumber_penghasilan`, `css_pemasukan_per_bulan` | Tabel referensi/lookup untuk validasi registrasi nasabah. |
-| 21 | `app_kode_kantor` / `app_kode_kantor_atk` | Master kantor/unit kerja (`kode_kantor` → `nama_kantor`); varian ATK memuat pemetaan akun RAK antar-kantor. |
-| 22 | `aba`, `aba_integrasi`, `abatrans` | Rekening & transaksi ABA (antar-bank). |
+| 10 | `nasabah` | Data nasabah (CIF). |
+| 11 | `tabung` | Rekening tabungan. |
+| 12 | `tabtrans` | Transaksi tabungan (mutasi). |
+| 13 | `kredit` | Rekening pinjaman/kredit. |
+| 14 | `kretrans` | Transaksi kredit (pencairan/angsuran). |
+| 15 | `deposito` | Rekening deposito. |
+| 16 | `deptrans` | Transaksi deposito. |
+| 17 | `transaksi_master` | Header jurnal GL (ditulis saat posting transaksi). |
+| 18 | `transaksi_detail` | Baris jurnal GL (debet/kredit per akun; `master_id`→`transaksi_master`). |
+| 19 | `tab_produk` / `kre_produk` / `dep_produk` | Master produk tabungan / kredit / deposito. |
+| 20 | `tab_integrasi` / `kre_integrasi` / `dep_integrasi` | Pemetaan kode integrasi per modul ke kode perkiraan GL. |
+| 21 | `perkiraan` | Bagan akun (Chart of Accounts / kode perkiraan GL). |
+| 22 | `css_jenis_debitur`, `css_kode_agama`, `css_sumber_penghasilan`, `css_pemasukan_per_bulan` | Tabel referensi/lookup untuk validasi registrasi nasabah. |
+| 23 | `app_kode_kantor` / `app_kode_kantor_atk` | Master kantor/unit kerja (`kode_kantor` → `nama_kantor`); varian ATK memuat pemetaan akun RAK antar-kantor. |
+| 24 | `aba`, `aba_integrasi`, `abatrans` | Rekening & transaksi ABA (antar-bank). |
 
-### 1.3 DB Sys (`cma_sys`)
+### 1.3 DB Sys (`dbcore_sys`)
 | No | Nama Tabel | Deskripsi |
 |----|-----------|-----------|
-| 23 | `sys_daftar_user` | Data pengguna (kredensial SHA1, `unit_kerja` → `kode_kantor`). |
-| 24 | `sys_mysysid` | Parameter sistem key-value (mis. setting registrasi/limit modul MCS). |
+| 25 | `sys_daftar_user` | Data pengguna (kredensial SHA1, `unit_kerja` → `kode_kantor`). |
+| 26 | `sys_mysysid` | Parameter sistem key-value (mis. setting registrasi/limit modul MCS). |
 
 ---
 
@@ -182,6 +189,52 @@ Catatan penting:
 | 6 | `is_active` | `TINYINT(1)` | NULL | `1` | Aktif (dropdown hanya yang aktif). |
 | 7 | `created_at` | `TIMESTAMP` | NOT NULL | `CURRENT_TIMESTAMP` | Waktu buat. |
 
+#### Tabel: `api_tab_campaign` (entity `ApiTabCampaign`)
+> Master campaign saldo minimum tabungan — **satu-satunya sumber** nilai yang boleh menimpa
+> `tab_produk.saldo_minimum_default`. Nilai saldo minimum tidak pernah berasal dari payload API
+> (BR-020); konsumen hanya merujuk campaign yang sudah disetujui bank.
+
+| No | Kolom | Tipe Data | Null | Default | Keterangan |
+|----|-------|-----------|------|---------|------------|
+| 1 | `kode_campaign` | `VARCHAR(20)` | NOT NULL | | **PK**. Dirujuk payload `kodeCampaign`. |
+| 2 | `nama_campaign` | `VARCHAR(100)` | NOT NULL | | Nama campaign. |
+| 3 | `kode_produk` | `VARCHAR(3)` | NOT NULL | | Produk tabungan yang dicakup (`tab_produk`). |
+| 4 | `kode_kantor` | `VARCHAR(4)` | NULL | | **NULL = semua kantor**; baris per-kantor menang atas baris NULL. |
+| 5 | `saldo_minimum` | `DECIMAL(18,2)` | NOT NULL | | Nilai yang dipakai sebagai `tabung.minimum` (0 = bebas saldo minimum). |
+| 6 | `tgl_mulai` | `DATE` | NOT NULL | | Awal periode berlaku. |
+| 7 | `tgl_akhir` | `DATE` | NOT NULL | | Akhir periode berlaku (registrasi otomatis kembali ke default setelah lewat). |
+| 8 | `is_active` | `TINYINT(1)` | NOT NULL | `1` | Nonaktif = tidak dipakai walau periodenya masih berlaku. |
+| 9 | `no_memo` | `VARCHAR(50)` | NULL | | Referensi memo/SK persetujuan BPR — jejak dasar campaign. |
+| 10 | `dibuat_oleh` | `VARCHAR(20)` | NOT NULL | | Pembuat campaign — `user_id` **atau** nama/inisial unit pembuat (teks bebas, mis. `USSI`). |
+| 11 | `disetujui_oleh` | `VARCHAR(20)` | NULL | | Pejabat yang menyetujui — `user_id` **atau** nama pejabat (mis. `B Eko Prasetyo`). Pilih satu gaya dan pakai konsisten per lembaga. |
+| 12 | `created_at` | `DATETIME` | NOT NULL | `CURRENT_TIMESTAMP` | Waktu buat. |
+
+**Index:** `idx_campaign_lookup` (`kode_produk`, `kode_kantor`, `is_active`, `tgl_mulai`, `tgl_akhir`).
+
+#### Tabel: `api_tab_minimum_change` (entity `ApiTabMinimumChange`)
+> Jejak audit setiap perubahan `tabung.minimum` via `POST /api/v1/tabungan/update-saldo-minimum`
+> (BR-021). Alur API **tanpa maker-checker** (keputusan BPR), sehingga tabel ini adalah kontrol
+> penggantinya: `minimum_lama` (nilai asal) membuat perubahan dapat dibuktikan ke pemeriksa dan
+> dibalikkan. Baris ditulis **dalam transaksi yang sama** dengan UPDATE `tabung`, dan bersifat
+> **append-only** (pengembalian ke default produk menambah baris, tidak menimpa baris lama).
+
+| No | Kolom | Tipe Data | Null | Keterangan |
+|----|-------|-----------|------|------------|
+| 1 | `id` | `BIGINT` | NOT NULL | **PK**, AUTO_INCREMENT. |
+| 2 | `no_rekening` | `VARCHAR(20)` | NOT NULL | Rekening tabungan yang diubah. |
+| 3 | `kode_kantor` | `VARCHAR(4)` | NULL | Kantor pemilik rekening (saat perubahan). |
+| 4 | `kode_produk` | `VARCHAR(3)` | NULL | Produk rekening (saat perubahan). |
+| 5 | `kode_campaign` | `VARCHAR(20)` | NULL | Dasar campaign; NULL untuk aksi `DEFAULT_PRODUK`. |
+| 6 | `aksi` | `VARCHAR(20)` | NOT NULL | `CAMPAIGN` / `DEFAULT_PRODUK`. |
+| 7 | `minimum_lama` | `DECIMAL(18,2)` | NOT NULL | **Nilai asal** (before-image). |
+| 8 | `minimum_baru` | `DECIMAL(18,2)` | NOT NULL | Nilai setelah perubahan. |
+| 9 | `alasan` | `VARCHAR(255)` | NOT NULL | Alasan dari pemohon (wajib). |
+| 10 | `user_id` | `VARCHAR(20)` | NOT NULL | Pelaku (dari klaim token). |
+| 11 | `idempotency_key` | `VARCHAR(64)` | NULL | `X-IDEMPOTENCY-KEY` request. |
+| 12 | `created_at` | `DATETIME` | NOT NULL | Waktu perubahan (WIB). |
+
+**Index:** `idx_minimum_change_rek` (`no_rekening`), `idx_minimum_change_tgl` (`created_at`).
+
 ### 2.2 Tabel Core Banking IBS (kolom kunci — struktur dikelola IBS)
 
 > Tabel-tabel berikut **milik/berbagi dengan Core Banking IBS**; H2H hanya membaca/menulis
@@ -207,6 +260,14 @@ menambah `mata_uang` & `status_tempat_tinggal`.)*
 Kolom kunci: `nasabah_id` (FK→`nasabah`), `kode_produk` (→`tab_produk`), `suku_bunga`,
 `persen_pph`, `tgl_register`, `minimum`, `setoran_minimum`, **`saldo_akhir`** (dikunci saat
 posting), `verifikasi`, **`kode_kantor`**, `kode_integrasi`, `userid`, `status`.
+
+> ⚠️ **`minimum` adalah kolom bernilai uang**, bukan kosmetik: ikut menentukan saldo efektif
+> (`saldo_akhir − saldo_blokir − minimum`) yang dipakai saat validasi penarikan, sehingga
+> menurunkannya menaikkan dana yang dapat ditarik. Nilainya diisi saat registrasi dari campaign yang
+> berlaku (`api_tab_campaign`) atau `tab_produk.saldo_minimum_default`, dan hanya boleh diubah
+> melalui `POST /api/v1/tabungan/update-saldo-minimum` — yang selalu meninggalkan jejak
+> `api_tab_minimum_change` dalam transaksi yang sama (BR-021). **Struktur tabel `tabung` tidak
+> diubah** oleh fitur campaign (tidak ada patch pada tabel legacy ini).
 
 #### `tabtrans` (entity `Tabtrans`) — PK `tabtrans_id` `VARCHAR(11)`
 Mutasi tabungan: `tgl_trans`, `no_rekening` (→`tabung`), `kode_trans`, `my_kode_trans`,
@@ -255,7 +316,7 @@ Transaksi deposito: `tgl_trans`, `no_rekening` (→`deposito`), `kode_trans`, `m
 - `app_kode_kantor` (PK `kode_kantor` V4) — `nama_kantor`; dipakai saat login untuk melengkapi
   data kantor dari `unit_kerja`.
 
-### 2.3 Tabel DB Sys (`cma_sys`)
+### 2.3 Tabel DB Sys (`dbcore_sys`)
 
 #### Tabel: `sys_daftar_user` (entity `SysDaftarUser`) — PK `user_id` `VARCHAR(11)`
 | No | Kolom | Tipe Data | Keterangan |
@@ -321,6 +382,15 @@ Transaksi deposito: `tgl_trans`, `no_rekening` (→`deposito`), `kode_trans`, `m
    logout menghapus.
 7. **`ddl-auto=none`** — semua perubahan skema via patch SQL manual di `database/patches/`,
    diterapkan sebelum deploy build yang cocok.
+8. **Saldo minimum & campaign** — `tabung.minimum` diisi saat registrasi dari campaign aktif
+   (`api_tab_campaign`, cocok `kode_produk` + `kode_kantor` + periode; baris per-kantor menang atas
+   baris `kode_kantor IS NULL`), jika tidak ada dari `tab_produk.saldo_minimum_default`. Nilainya
+   **tidak pernah** berasal dari payload API.
+9. **Audit perubahan data bernilai uang** — setiap perubahan `tabung.minimum` menulis satu baris
+   `api_tab_minimum_change` (nilai asal → nilai baru, pelaku, waktu, alasan, dasar campaign) di
+   dalam **satu transaksi** dengan UPDATE-nya; baris audit *append-only*. Baris audit tidak dibuat
+   bila nilai lama = nilai baru (no-op). Pola yang sama wajib dipakai untuk perubahan kolom
+   bernilai uang lain pada rekening existing.
 
 ## 5. DDL (tabel milik H2H)
 
@@ -392,6 +462,43 @@ CREATE TABLE `api_transaction_log` (
     KEY `branch_code` (`kode_kantor`)
 ) ENGINE=InnoDB;
 
+-- Master campaign saldo minimum tabungan (patch_tab_campaign_saldo_minimum.sql)
+CREATE TABLE `api_tab_campaign` (
+    `kode_campaign`  VARCHAR(20)   NOT NULL,
+    `nama_campaign`  VARCHAR(100)  NOT NULL,
+    `kode_produk`    VARCHAR(3)    NOT NULL,
+    `kode_kantor`    VARCHAR(4)             DEFAULT NULL,  -- NULL = semua kantor
+    `saldo_minimum`  DECIMAL(18,2) NOT NULL,               -- 0 = bebas saldo minimum
+    `tgl_mulai`      DATE          NOT NULL,
+    `tgl_akhir`      DATE          NOT NULL,
+    `is_active`      TINYINT(1)    NOT NULL DEFAULT 1,
+    `no_memo`        VARCHAR(50)            DEFAULT NULL,  -- referensi persetujuan BPR
+    `dibuat_oleh`    VARCHAR(20)   NOT NULL,
+    `disetujui_oleh` VARCHAR(20)            DEFAULT NULL,
+    `created_at`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`kode_campaign`),
+    KEY `idx_campaign_lookup` (`kode_produk`, `kode_kantor`, `is_active`, `tgl_mulai`, `tgl_akhir`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- Jejak audit perubahan tabung.minimum (append-only; ditulis satu transaksi dengan UPDATE tabung)
+CREATE TABLE `api_tab_minimum_change` (
+    `id`              BIGINT        NOT NULL AUTO_INCREMENT,
+    `no_rekening`     VARCHAR(20)   NOT NULL,
+    `kode_kantor`     VARCHAR(4)             DEFAULT NULL,
+    `kode_produk`     VARCHAR(3)             DEFAULT NULL,
+    `kode_campaign`   VARCHAR(20)            DEFAULT NULL, -- NULL untuk aksi DEFAULT_PRODUK
+    `aksi`            VARCHAR(20)   NOT NULL,              -- CAMPAIGN | DEFAULT_PRODUK
+    `minimum_lama`    DECIMAL(18,2) NOT NULL,              -- nilai asal (before-image)
+    `minimum_baru`    DECIMAL(18,2) NOT NULL,
+    `alasan`          VARCHAR(255)  NOT NULL,
+    `user_id`         VARCHAR(20)   NOT NULL,
+    `idempotency_key` VARCHAR(64)            DEFAULT NULL,
+    `created_at`      DATETIME      NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_minimum_change_rek` (`no_rekening`),
+    KEY `idx_minimum_change_tgl` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
 -- Referensi kode binding bank (ABA)
 CREATE TABLE `api_binding_bank` (
     `id`           BIGINT NOT NULL AUTO_INCREMENT,
@@ -423,6 +530,29 @@ CREATE TABLE `api_integration` (
 Tabungan/ABA/CoA), `L2` (Pembayaran Angsuran), `T1/T2/T3` (Transfer Antar Tabungan / Penarikan
 via ABA / via CoA).
 
+**Seed `api_tab_campaign` (campaign bebas saldo minimum — `seed_api_tab_campaign.sql`):** empat
+campaign untuk produk tabungan **201, 202, 203, 204** dengan `saldo_minimum = 0.00`,
+`kode_kantor = NULL` (semua kantor), `is_active = 1`, `dibuat_oleh = 'USSI'`,
+`disetujui_oleh = 'B Eko Prasetyo'`.
+
+| `kode_campaign` | `nama_campaign` | `kode_produk` | `saldo_minimum` | Periode |
+|-----------------|-----------------|---------------|-----------------|---------|
+| `CMP-NOMIN-201-2026` | Bebas Saldo Minimum Produk 201 | `201` | `0.00` | 2026-08-01 … 2026-09-30 |
+| `CMP-NOMIN-202-2026` | Bebas Saldo Minimum Produk 202 | `202` | `0.00` | 2026-08-01 … 2026-09-30 |
+| `CMP-NOMIN-203-2026` | Bebas Saldo Minimum Produk 203 | `203` | `0.00` | 2026-08-01 … 2026-09-30 |
+| `CMP-NOMIN-204-2026` | Bebas Saldo Minimum Produk 204 | `204` | `0.00` | 2026-08-01 … 2026-09-30 |
+
+Catatan:
+- `no_memo` pada file seeder masih **placeholder** (`MEMO/BPR/VIII/2026/001`) — ganti dengan nomor
+  memo/SK persetujuan BPR yang asli sebelum dijalankan di produksi (kolom ini adalah jejak dasar
+  persetujuan campaign).
+- Periode dievaluasi **inklusif** (`tanggal BETWEEN tgl_mulai AND tgl_akhir`), jadi 2026-09-30 masih
+  aktif dan campaign berakhir sendiri pada 2026-10-01 tanpa perubahan kode/deploy.
+- Seeder **idempotent** (`INSERT … ON DUPLICATE KEY UPDATE`) sehingga aman dijalankan ulang.
+- Menghentikan campaign lebih awal dilakukan dengan `is_active = 0`; **jangan `DELETE`** baris
+  campaign karena `api_tab_minimum_change.kode_campaign` merujuknya (jejak audit harus tetap dapat
+  ditelusuri).
+
 ---
 
 ## 📑 Riwayat Revisi
@@ -432,6 +562,8 @@ via ABA / via CoA).
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat (dari entity JPA & DDL patch) |
 | 1.1.0 | 16 Juli 2026 | | Tambah kolom `dep_produk.is_custom_rate` (`TINYINT(1) NOT NULL DEFAULT 0`) — flag produk deposito *special rate*; patch `patch_dep_produk_is_custom_rate.sql`. |
 | 1.1.1 | 17 Juli 2026 | | Catatan aturan `jkw` produk *special rate* diperbarui `6/12` → 1/3/6/12 (tanpa perubahan skema). |
+| 1.2.0 | 5 Agustus 2026 | | Nama database dibuat generik: `cma`/`cma_sys` → **`dbcore`/`dbcore_sys`** (nama skema spesifik lembaga tidak dipakai di dokumen yang di-deliver ke klien). Tambah tabel milik H2H `api_tab_campaign` (master campaign saldo minimum) & `api_tab_minimum_change` (jejak audit perubahan `tabung.minimum`) + DDL-nya; patch `patch_tab_campaign_saldo_minimum.sql`. Catatan `tabung.minimum` sebagai kolom bernilai uang & aturan data #8/#9. Tabel legacy `tabung` **tidak** diubah. |
+| 1.2.1 | 6 Agustus 2026 | | Tambah bagian **Seed `api_tab_campaign`** (`seed_api_tab_campaign.sql`): 4 campaign bebas saldo minimum produk 201–204, `saldo_minimum` 0, semua kantor, 2026-08-01 s/d 2026-09-30, `dibuat_oleh` USSI / `disetujui_oleh` B Eko Prasetyo, seeder idempotent, penghentian campaign via `is_active = 0` (bukan `DELETE`). Keterangan kolom `dibuat_oleh`/`disetujui_oleh` diperjelas: boleh `user_id` maupun nama. Tanpa perubahan skema. |
 
 ---
 

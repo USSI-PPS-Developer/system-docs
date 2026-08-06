@@ -26,7 +26,7 @@
 | Format | JSON (UTF-8) |
 | Autentikasi | JWT Bearer (HS256, per-`client_id`) + header `X-CLIENT-ID` saat login/refresh |
 | Dokumentasi interaktif | `/swagger-ui.html` |
-| Health probe | `GET /actuator/health` |
+| Health probe | `GET /actuator/health` (anonim: status saja; dengan `X-MONITORING-KEY`: + blok `components`) |
 
 ## 2. Konvensi
 
@@ -102,6 +102,7 @@ Seluruh endpoint bisnis mengembalikan envelope `ApiResponse<T>`:
 | 15 | `POST` | `/pencarian` | Pencarian data tabungan. |
 | 16 | `POST` | `/saldo` | Inquiry saldo tabungan. |
 | 17 | `POST` | `/list` | Daftar mutasi rekening tabungan. |
+| 17a | `POST` | `/update-saldo-minimum` | Ubah saldo minimum rekening existing (campaign bebas saldo minimum / kembali ke default produk). |
 
 ### 3.4 Pinjaman/Kredit — `/api/v1/pinjaman`
 | No | Method | Endpoint | Deskripsi |
@@ -405,6 +406,13 @@ legacy core. Payload dikirim sebagai base64.
 | `/pencarian` | `InquiryTabungRequestDTO` | `kodeKantor`, `userId`, `search` | `assertOffice(kodeKantor)` |
 | `/saldo` | `InquirySaldoRequestDTO` | `tglTrans`, `noRekening`, `userId` | `assertTabungOffice(noRekening)` |
 | `/list` | `ListTabungRequestDTO` | `kodeKantor`, `noRekening`, `tglAwal`, `tglAkhir` (date), `userId` | `assertOffice(kodeKantor)` |
+| `/update-saldo-minimum` | `UpdateSaldoMinimumRequestDTO` | `noRekening`, `aksi`, `kodeCampaign?`, `alasan`, `userId` | allowlist `tabung.minimum-editor-user-ids` + `assertTabungOffice(noRekening)` |
+
+> **Registrasi & saldo minimum.** `/registrasi` **tidak berubah** kontraknya. Nilai
+> `tabung.minimum` diambil dari campaign yang berlaku untuk kombinasi `kodeProduk` + `kodeKantor`
+> pada tanggal registrasi (`api_tab_campaign`, mis. campaign bebas saldo minimum → 0); bila tidak ada
+> campaign aktif dipakai `tab_produk.saldo_minimum_default`. Campaign khusus kantor menang atas
+> campaign semua-kantor (`kode_kantor` NULL). Konsumen **tidak** mengirim flag/nominal apa pun.
 
 **Contoh Response `/saldo`**
 ```json
@@ -418,6 +426,73 @@ legacy core. Payload dikirim sebagai base64.
   "responseMessage": "..."
 }
 ```
+
+---
+
+### 4.10a `POST /api/v1/tabungan/update-saldo-minimum`
+
+Mengubah **saldo minimum rekening tabungan existing** — dipakai untuk campaign bebas saldo minimum
+dan untuk mengembalikannya ke default produk setelah campaign selesai.
+
+**Request Body**
+```json
+{
+  "noRekening": "0010001",
+  "aksi": "CAMPAIGN",
+  "kodeCampaign": "CMP-NOMIN-2026",
+  "alasan": "Campaign bebas saldo minimum 2026",
+  "userId": "199"
+}
+```
+
+| Field | Tipe | Wajib | Keterangan |
+|-------|------|-------|-----------|
+| `noRekening` | string | ✅ | Rekening tabungan yang diubah. |
+| `aksi` | string | ✅ | `CAMPAIGN` (nilai dari master campaign) atau `DEFAULT_PRODUK` (kembali ke `tab_produk.saldo_minimum_default`). Nilai lain → `02`. |
+| `kodeCampaign` | string (≤20) | ⬜ | **Wajib bila `aksi=CAMPAIGN`**; diabaikan bila `DEFAULT_PRODUK`. |
+| `alasan` | string (≤255) | ✅ | Ikut direkam pada jejak audit. |
+| `userId` | string | ✅ | Harus sama dengan `user_id` pada token. |
+
+> ⚠️ **Tidak ada field nominal.** Nilai saldo minimum selalu diturunkan sistem dari master campaign
+> atau default produk, sehingga endpoint ini **tidak dapat** dipakai menetapkan angka sembarang —
+> hanya mendaftarkan rekening ke campaign yang sudah disetujui bank, atau mengembalikan default.
+
+**Header:** `Authorization` (Bearer access token), `X-IDEMPOTENCY-KEY` (wajib). Rate limit 5/60s.
+
+**Otorisasi:** `user_id` token harus terdaftar pada allowlist `tabung.minimum-editor-user-ids`
+(kosong = semua ditolak) **dan** rekening harus milik kantor token (`assertTabungOffice`).
+Berbeda dengan backoffice CBS, alur ini **tanpa maker-checker** (keputusan BPR); kontrol
+penggantinya adalah allowlist di atas + jejak audit di bawah.
+
+**Response `00`**
+```json
+{
+  "responseCode": "00",
+  "responseData": {
+    "noRekening": "0010001",
+    "kodeCampaign": "CMP-NOMIN-2026",
+    "minimumLama": 50000,
+    "minimumBaru": 0,
+    "berubah": true
+  },
+  "responseMessage": "Saldo minimum rekening tabungan berhasil diubah"
+}
+```
+
+- `berubah = false` → nilai lama sudah sama dengan nilai baru: **tidak ada perubahan dan tidak ada
+  baris audit** (aman untuk retry), pesan "Saldo minimum rekening tabungan sudah sesuai, tidak ada perubahan".
+- Setiap perubahan menulis satu baris `api_tab_minimum_change` (nilai asal, nilai baru, aksi,
+  campaign, alasan, pelaku, waktu, idempotency key) **dalam transaksi yang sama** dengan UPDATE-nya.
+
+**Kode error khusus**
+
+| Kode | HTTP | Kondisi |
+|------|------|---------|
+| `02` | 400 | `aksi` di luar `CAMPAIGN`/`DEFAULT_PRODUK`, `alasan`/`noRekening` kosong, `kodeCampaign` > 20 karakter. |
+| `95` | 400 | "Rekening tabungan tidak ditemukan" · "Kode campaign harus diisi untuk aksi CAMPAIGN" · "Campaign tidak ditemukan" · "Campaign tidak aktif" · "Campaign di luar periode berlaku" · "Campaign tidak berlaku untuk produk rekening ini" · "Campaign tidak berlaku untuk kantor rekening ini" · "Setting produk tabungan tidak ditemukan". Rekening **tidak** diubah. |
+| `99` | 403 | `userId` ≠ `user_id` token, **atau** user tidak terdaftar pada `tabung.minimum-editor-user-ids` ("User tidak berwenang mengubah saldo minimum"), **atau** rekening milik kantor lain. |
+| `93` | 409 | `X-IDEMPOTENCY-KEY` sudah pernah dipakai. |
+| `94` | 429 | Melebihi 5 request / 60 detik. |
 
 ---
 
@@ -617,6 +692,18 @@ ada tenant guard.
 > Key-gated via `X-MONITORING-KEY` (header) atau `monitoringKey` (query). Dikonsumsi dashboard
 > `health-ui-mcs`. Fail-closed bila key tidak diset di server.
 
+#### 4.20.1 `GET /actuator/health` — dua bentuk respons
+
+Endpoint ini **selalu dapat diakses anonim** (probe LB/Kubernetes tidak boleh ditolak), tetapi
+tingkat detailnya bergantung pada key monitoring (`management.endpoint.health.show-details=when-authorized`):
+
+| Pemanggil | Contoh respons | Catatan |
+|-----------|----------------|---------|
+| Anonim / key salah | `{"status":"UP","groups":["liveness","readiness"]}` | Tanpa blok `components` — internal DB/Redis/disk/versi tidak dibocorkan. Key salah **tidak** menghasilkan 401 di path ini |
+| `X-MONITORING-KEY: <key>` valid | `{"status":"UP","components":{"db":{...},"redis":{...},"diskSpace":{"details":{"free":...,"total":...}},...}}` | Request diautentikasi dengan role `MONITORING`; ini yang dipakai kartu DB / Redis / Disk pada dashboard |
+
+Status HTTP: `200` bila `status` = `UP`, `503` bila `DOWN` (berlaku untuk kedua bentuk).
+
 | Endpoint | Params | Response |
 |----------|--------|----------|
 | `GET /` | `from`,`to` (`yyyy-MM-dd HH:mm`, opsional), `page`(0), `size`(10), `status`, `keyword` | `Page<ApiLogListDTO>` |
@@ -675,6 +762,8 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | Tambah `GET /deposito/produk-spesial-rate`; registrasi deposito mendukung produk *special rate* (`sukuBunga` wajib, `jkw` 6/12); response code baru `03` (`SPECIAL_RATE_REQUIRED`). |
 | 1.1.1 | 17 Juli 2026 | | Aturan `jkw` produk *special rate* diperluas dari `6/12` menjadi **1/3/6/12** (permintaan BPR). |
+| 1.2.1 | 6 Agustus 2026 | | Tambah §4.20.1 — dua bentuk respons `GET /actuator/health`: anonim (status saja, tanpa `components`) vs pemanggil dengan `X-MONITORING-KEY` valid (dengan `components` db/redis/diskSpace, role `MONITORING`); key salah tidak menghasilkan 401 pada path ini. Tidak ada perubahan pada endpoint bisnis. |
+| 1.2.0 | 5 Agustus 2026 | | Tambah `POST /tabungan/update-saldo-minimum` (§4.10a) untuk campaign bebas saldo minimum rekening existing + catatan resolusi campaign pada `/tabungan/registrasi` (kontrak registrasi tidak berubah). Tidak ada kode response baru. |
 
 ---
 
