@@ -496,15 +496,84 @@ penggantinya adalah allowlist di atas + jejak audit di bawah.
 
 ---
 
-### 4.11 `POST /api/v1/pinjaman/*`
+### 4.11 `POST /api/v1/pinjaman/*` · `GET /api/v1/pinjaman/loan-style`
 
 | Endpoint | Request DTO | Field kunci | Guard |
 |----------|-------------|-------------|-------|
-| `/registrasi` | `CreateKreditRequestDTO` | `kodeKantor`,`userId`,`nasabahId`,`kodeProduk`,`jmlPinjaman`,`jmlAngsuran`,`satuanWaktuAngsuran`(`[HMB]`),`tglRealisasi`,`noSpk`,`typeKredit`(`100/200/300/310/350/700/710`),`sukuBungaPerTahun` | `assertOffice(kodeKantor)` |
+| `GET /loan-style` | — (`Authorization` + query opsional `kodeProduk`) | — | — (tabel referensi global, tanpa tenant guard) |
+| `/registrasi` | `CreateKreditRequestDTO` | `kodeKantor`,`userId`,`nasabahId`,`tglRealisasi`,`noSpk`,`loanStyleId`(opsional — catalog `api_loan_style`, lihat §4.11.1) — `kodeProduk`,`jmlPinjaman`,`jmlAngsuran`,`satuanWaktuAngsuran`(`[HMB]`),`typeKredit`(`100/200/300/310/350/700/710`),`sukuBungaPerTahun` wajib **hanya** bila `loanStyleId` kosong | `assertOffice(kodeKantor)` |
 | `/jadwal` | `InquiryJadwalKreditRequestDTO` | `noRekening`,`userId` | `assertKreditOffice(noRekening)` |
 | `/tagihan` | `InquiryTagihanKreditRequestDTO` | `noRekening`,`tglTrans`(date),`userId` | `assertKreditOffice(noRekening)` |
 | `/saldo` | `InquirySaldoRequestDTO` | `tglTrans`,`noRekening`,`userId` | `assertKreditOffice(noRekening)` |
 | `/list` | `ListKreditRequestDTO` | `kodeKantor`,`noRekening`,`tglHitung`(date),`userId` | `assertOffice(kodeKantor)` |
+
+**`GET /loan-style` — Response 200 OK**
+```json
+{
+  "responseCode": "00",
+  "responseData": [
+    {
+      "loanStyleId": 1,
+      "kodeProduk": "710",
+      "namaLoanStyle": "Pinjaman Rp1.000.000 - 1 Bulan",
+      "plafond": 1000000.00,
+      "tenor": 1,
+      "sukuBungaPerTahun": 24.0000,
+      "percProvisi": 1.000,
+      "percAdm": 0.500,
+      "percDenda": 0.300
+    }
+  ],
+  "responseMessage": "Daftar loan style berhasil ditemukan"
+}
+```
+
+> Endpoint GET ini bersifat referensi (read-only), **tanpa** `X-IDEMPOTENCY-KEY` — sama pola
+> dengan `GET /deposito/produk-spesial-rate`. Mengembalikan hanya baris `api_loan_style` yang
+> `is_active=1`, terurut `plafond` menaik. Query `kodeProduk` opsional: diisi → filter satu
+> produk; kosong/tidak dikirim → seluruh catalog aktif (semua produk). Dipakai M-Pay untuk
+> menampilkan pilihan dropdown (termasuk `sukuBungaPerTahun`/`percProvisi`/`percAdm`/`percDenda`
+> supaya bunga & biaya bisa ditampilkan ke nasabah sebelum submit) **sebelum** mengirim
+> `loanStyleId` terpilih ke `/registrasi` (§4.11.1).
+
+#### 4.11.1 Aturan *loan style* M-Pay (`/registrasi`)
+
+CR BPR — UI M-Pay (aplikasi terpisah, di luar cakupan dokumen ini) mengganti input nominal
+pinjaman bebas menjadi **dropdown nominal tetap** (Rp1.000.000 / 2.000.000 / 3.500.000 /
+5.000.000 / 7.500.000 / 10.000.000), masing-masing dengan tenor dibatasi **1 atau 3 bulan**.
+`/registrasi` menerima field baru **opsional** `loanStyleId` (`Long`) yang merujuk catalog
+`api_loan_style`. **Kontrak lama tidak berubah** — endpoint ini juga melayani tipe kredit
+non-M-Pay (`typeKredit` 200/300/310/350/700/710), jadi ini bukan perubahan yang breaking.
+M-Pay **tidak perlu dan tidak boleh mengirim `kodeProduk`** — kode produk internal ini juga
+diturunkan dari catalog, client cukup tahu `loanStyleId` (dari `GET /loan-style`, §4.11). Suku
+bunga (`sukuBungaPerTahun`) juga diturunkan dari catalog untuk alasan yang sama.
+
+| Kondisi | `kodeProduk`/`typeKredit`/`jmlPinjaman`/`jmlAngsuran`/`satuanWaktuAngsuran`/`sukuBungaPerTahun` (payload) | Sumber nilai tersimpan |
+|---------|---------------------------------------------------------------------|-------------------------|
+| **`loanStyleId` diisi** | Diabaikan sepenuhnya (termasuk bila client tetap mengirim salah satunya — tidak divalidasi terhadap catalog, langsung ditimpa) | Diturunkan dari `api_loan_style`: `kode_produk`, `type_kredit`, `plafond`→`jmlPinjaman`, `tenor`→`jmlAngsuran`, `satuanWaktuAngsuran` selalu `"B"`, `suku_bunga_per_tahun`→`sukuBungaPerTahun` |
+| **`loanStyleId` kosong** | Wajib diisi client, seperti sebelumnya (termasuk `kodeProduk` dan `sukuBungaPerTahun`) | Dari payload (perilaku tidak berubah) |
+
+Bila `loanStyleId` diisi, registrasi juga menulis **snapshot** biaya pada `kredit` (tidak
+diekspos pada response body — `noRekening` tetap satu-satunya field response):
+`provisi = plafond × perc_provisi / 100`, `adm_lainnya = plafond × perc_adm / 100`,
+`perc_denda` = salinan `api_loan_style.perc_denda` (0,3%/hari) pada baris catalog.
+
+> ⚠️ **Denda keterlambatan belum diterapkan.** `perc_denda` pada perubahan ini **hanya
+> disimpan** sebagai data (`api_loan_style.perc_denda` & snapshot `kredit.perc_denda`); alur
+> angsuran/pembayaran **belum** menghitung atau memposting denda. Metode angsuran tetap
+> **flat** (pokok+bunga tetap per periode), tanpa penalti pelunasan dipercepat.
+>
+> ⚠️ **Catalog dengan suku bunga belum di-backfill ditolak.** `api_loan_style.suku_bunga_per_tahun`
+> ditambahkan lewat `ALTER ... DEFAULT 0` setelah tabel sudah punya baris — baris yang belum
+> di-`UPDATE` manual punya `suku_bunga_per_tahun = 0`. `loanStyleId` yang merujuk baris seperti
+> itu ditolak (kode `95`, "Suku bunga loan style belum diisi") supaya tidak ada kredit
+> ter-registrasi dengan bunga 0% secara tidak sengaja.
+
+**Kode error khusus (`loanStyleId`)**
+
+| Kode | HTTP | Kondisi |
+|------|------|---------|
+| `95` | 400 | "Loan style tidak ditemukan" · "Loan style sudah tidak aktif" · "Tenor loan style tidak valid: {n}" · "Suku bunga loan style belum diisi" · (jalur `loanStyleId` kosong) "Kode produk harus diisi" · "Tipe kredit harus diisi" · "Jumlah pinjaman harus diisi" · "Jumlah angsuran harus diisi" · "Satuan waktu angsuran harus diisi" · "Suku bunga pinjaman pertahun diisi". Kredit **tidak** dibuat. |
 
 ---
 
@@ -764,6 +833,10 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 | 1.1.1 | 17 Juli 2026 | | Aturan `jkw` produk *special rate* diperluas dari `6/12` menjadi **1/3/6/12** (permintaan BPR). |
 | 1.2.1 | 6 Agustus 2026 | | Tambah §4.20.1 — dua bentuk respons `GET /actuator/health`: anonim (status saja, tanpa `components`) vs pemanggil dengan `X-MONITORING-KEY` valid (dengan `components` db/redis/diskSpace, role `MONITORING`); key salah tidak menghasilkan 401 pada path ini. Tidak ada perubahan pada endpoint bisnis. |
 | 1.2.0 | 5 Agustus 2026 | | Tambah `POST /tabungan/update-saldo-minimum` (§4.10a) untuk campaign bebas saldo minimum rekening existing + catatan resolusi campaign pada `/tabungan/registrasi` (kontrak registrasi tidak berubah). Tidak ada kode response baru. |
+| 1.3.0 | 25 Agustus 2026 | | Tambah §4.11.1 — aturan *loan style* M-Pay (CR BPR): `POST /pinjaman/registrasi` menerima field opsional baru `loanStyleId` merujuk catalog `api_loan_style` (dropdown nominal M-Pay: 1jt/2jt/3,5jt/5jt/7,5jt/10jt, tenor 1/3 bulan); bila diisi, `typeKredit`/`jmlPinjaman`/`jmlAngsuran`/`satuanWaktuAngsuran` diturunkan server-side dan nilai kiriman client diabaikan; bila kosong, kontrak lama tidak berubah. Response `/registrasi` tidak berubah. Kode error khusus `95` untuk `loanStyleId` tidak ditemukan/nonaktif/produk tidak cocok/tenor tidak valid. Dicatat eksplisit: denda keterlambatan 0,3%/hari belum diterapkan pada perubahan ini. |
+| 1.3.1 | 25 Agustus 2026 | | Tambah `GET /pinjaman/loan-style` (§4.11) — daftar catalog `api_loan_style` aktif (opsional filter `kodeProduk`), dipakai M-Pay untuk memuat pilihan dropdown sebelum mengirim `loanStyleId` ke `/registrasi`. JWT-only, tanpa `X-IDEMPOTENCY-KEY`/tenant guard (referensi global), pola sama dengan `GET /deposito/produk-spesial-rate`. Tidak ada kode response baru. |
+| 1.3.2 | 25 Agustus 2026 | | §4.11.1 diperluas: `kodeProduk` sekarang juga diturunkan dari `api_loan_style` bila `loanStyleId` diisi (M-Pay tidak perlu/tidak boleh mengirim `kodeProduk`) — sebelumnya field ini tetap wajib di kedua jalur. Pengecekan "loan style tidak berlaku untuk kode produk tersebut" dihapus (tidak relevan lagi, tidak ada nilai client untuk dicocokkan); daftar kode error `95` diperbarui. |
+| 1.3.3 | 25 Agustus 2026 | | §4.11 & §4.11.1 diperluas: `sukuBungaPerTahun` sekarang juga diturunkan dari `api_loan_style.suku_bunga_per_tahun` (kolom baru) bila `loanStyleId` diisi — M-Pay tidak perlu/tidak boleh mengirim suku bunga. `GET /loan-style` menambahkan `sukuBungaPerTahun` pada response. Kode error `95` baru: "Suku bunga loan style belum diisi" (catalog dengan suku bunga `<= 0`, mis. baris lama yang belum di-backfill setelah `ALTER ... DEFAULT 0`, ditolak). |
 
 ---
 

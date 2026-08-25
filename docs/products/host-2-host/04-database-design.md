@@ -37,7 +37,8 @@ Catatan penting:
 - Tabel dibagi dua kelompok kepemilikan:
   - **Milik H2H** (dibuat oleh produk ini, DDL ada di repo): `api_auth_config`,
     `api_refresh_tokens`, `api_login_log`, `api_log`, `api_transaction_log`,
-    `api_integration`, `api_binding_bank`.
+    `api_integration`, `api_binding_bank`, `api_tab_campaign`, `api_tab_minimum_change`,
+    `api_loan_style`.
   - **Milik / berbagi dengan Core Banking IBS (legacy)**: `nasabah`, `tabung`, `tabtrans`,
     `kredit`, `kretrans`, `deposito`, `deptrans`, tabel produk & referensi, serta
     `sys_daftar_user`, `sys_mysysid`. Struktur dikelola IBS — **jangan ubah format kolom**
@@ -59,31 +60,32 @@ Catatan penting:
 | 7 | `api_binding_bank` | Referensi kode binding bank (rekening ABA antar-bank). |
 | 8 | `api_tab_campaign` | Master campaign saldo minimum tabungan (mis. bebas saldo minimum = 0). |
 | 9 | `api_tab_minimum_change` | Jejak audit perubahan `tabung.minimum` (nilai asal → nilai baru). |
+| 10 | `api_loan_style` | Master catalog *loan style* kredit M-Pay (nominal/tenor/suku bunga & persentase provisi/adm/denda yang disetujui bank). |
 
 ### 1.2 Berbagi dengan Core Banking IBS — DB Primary (`dbcore`)
 | No | Nama Tabel | Deskripsi |
 |----|-----------|-----------|
-| 10 | `nasabah` | Data nasabah (CIF). |
-| 11 | `tabung` | Rekening tabungan. |
-| 12 | `tabtrans` | Transaksi tabungan (mutasi). |
-| 13 | `kredit` | Rekening pinjaman/kredit. |
-| 14 | `kretrans` | Transaksi kredit (pencairan/angsuran). |
-| 15 | `deposito` | Rekening deposito. |
-| 16 | `deptrans` | Transaksi deposito. |
-| 17 | `transaksi_master` | Header jurnal GL (ditulis saat posting transaksi). |
-| 18 | `transaksi_detail` | Baris jurnal GL (debet/kredit per akun; `master_id`→`transaksi_master`). |
-| 19 | `tab_produk` / `kre_produk` / `dep_produk` | Master produk tabungan / kredit / deposito. |
-| 20 | `tab_integrasi` / `kre_integrasi` / `dep_integrasi` | Pemetaan kode integrasi per modul ke kode perkiraan GL. |
-| 21 | `perkiraan` | Bagan akun (Chart of Accounts / kode perkiraan GL). |
-| 22 | `css_jenis_debitur`, `css_kode_agama`, `css_sumber_penghasilan`, `css_pemasukan_per_bulan` | Tabel referensi/lookup untuk validasi registrasi nasabah. |
-| 23 | `app_kode_kantor` / `app_kode_kantor_atk` | Master kantor/unit kerja (`kode_kantor` → `nama_kantor`); varian ATK memuat pemetaan akun RAK antar-kantor. |
-| 24 | `aba`, `aba_integrasi`, `abatrans` | Rekening & transaksi ABA (antar-bank). |
+| 11 | `nasabah` | Data nasabah (CIF). |
+| 12 | `tabung` | Rekening tabungan. |
+| 13 | `tabtrans` | Transaksi tabungan (mutasi). |
+| 14 | `kredit` | Rekening pinjaman/kredit. |
+| 15 | `kretrans` | Transaksi kredit (pencairan/angsuran). |
+| 16 | `deposito` | Rekening deposito. |
+| 17 | `deptrans` | Transaksi deposito. |
+| 18 | `transaksi_master` | Header jurnal GL (ditulis saat posting transaksi). |
+| 19 | `transaksi_detail` | Baris jurnal GL (debet/kredit per akun; `master_id`→`transaksi_master`). |
+| 20 | `tab_produk` / `kre_produk` / `dep_produk` | Master produk tabungan / kredit / deposito. |
+| 21 | `tab_integrasi` / `kre_integrasi` / `dep_integrasi` | Pemetaan kode integrasi per modul ke kode perkiraan GL. |
+| 22 | `perkiraan` | Bagan akun (Chart of Accounts / kode perkiraan GL). |
+| 23 | `css_jenis_debitur`, `css_kode_agama`, `css_sumber_penghasilan`, `css_pemasukan_per_bulan` | Tabel referensi/lookup untuk validasi registrasi nasabah. |
+| 24 | `app_kode_kantor` / `app_kode_kantor_atk` | Master kantor/unit kerja (`kode_kantor` → `nama_kantor`); varian ATK memuat pemetaan akun RAK antar-kantor. |
+| 25 | `aba`, `aba_integrasi`, `abatrans` | Rekening & transaksi ABA (antar-bank). |
 
 ### 1.3 DB Sys (`dbcore_sys`)
 | No | Nama Tabel | Deskripsi |
 |----|-----------|-----------|
-| 25 | `sys_daftar_user` | Data pengguna (kredensial SHA1, `unit_kerja` → `kode_kantor`). |
-| 26 | `sys_mysysid` | Parameter sistem key-value (mis. setting registrasi/limit modul MCS). |
+| 26 | `sys_daftar_user` | Data pengguna (kredensial SHA1, `unit_kerja` → `kode_kantor`). |
+| 27 | `sys_mysysid` | Parameter sistem key-value (mis. setting registrasi/limit modul MCS). |
 
 ---
 
@@ -235,6 +237,36 @@ Catatan penting:
 
 **Index:** `idx_minimum_change_rek` (`no_rekening`), `idx_minimum_change_tgl` (`created_at`).
 
+#### Tabel: `api_loan_style` (entity `ApiLoanStyle`)
+> Master catalog kredit "*loan style*" untuk M-Pay — **satu-satunya sumber** `kode_produk`,
+> `type_kredit`, `plafond` (jml pinjaman), `tenor` (jml angsuran), `suku_bunga_per_tahun`, serta
+> persentase provisi/adm/denda yang boleh dipakai saat registrasi kredit lewat `loanStyleId`.
+> Nilai-nilai ini tidak pernah berasal dari payload client — client hanya merujuk baris catalog
+> yang sudah disetujui bank (`no_memo`/`disetujui_oleh`), pola yang sama dengan
+> `api_tab_campaign` untuk campaign saldo minimum tabungan. **Belum ada baris yang di-seed
+> dengan nilai final** — nilai `perc_provisi`/`perc_adm`/`perc_denda`/`type_kredit`/
+> `suku_bunga_per_tahun` per nominal tier menunggu konfirmasi BPR (lihat catatan di bawah).
+
+| No | Kolom | Tipe Data | Null | Default | Keterangan |
+|----|-------|-----------|------|---------|------------|
+| 1 | `id` | `BIGINT` | NOT NULL | AUTO_INCREMENT | **PK**. |
+| 2 | `kode_produk` | `VARCHAR(5)` | NOT NULL | | Produk kredit yang dicakup (`kre_produk`). |
+| 3 | `nama_loan_style` | `VARCHAR(100)` | NOT NULL | | Nama deskriptif (mis. "Pinjaman Rp2.000.000 - 1 Bulan"). |
+| 4 | `plafond` | `DECIMAL(18,2)` | NOT NULL | | Nominal pinjaman tetap — satu dari 6 pilihan dropdown M-Pay. |
+| 5 | `tenor` | `INT` | NOT NULL | | Jumlah angsuran (bulan); divalidasi aplikasi hanya **1** atau **3**. |
+| 6 | `type_kredit` | `VARCHAR(3)` | NOT NULL | | Menentukan skema angsuran (flat/dst.); divalidasi terhadap set yang diizinkan (`100/200/300/310/350/700/710`). |
+| 7 | `perc_provisi` | `DECIMAL(6,3)` | NOT NULL | `0` | % biaya provisi; dikonversi ke nominal saat registrasi (`plafond × perc_provisi / 100`) → `kredit.provisi`. |
+| 8 | `perc_adm` | `DECIMAL(6,3)` | NOT NULL | `0` | % biaya admin; dikonversi ke nominal saat registrasi (`plafond × perc_adm / 100`) → `kredit.adm_lainnya`. |
+| 9 | `perc_denda` | `DECIMAL(6,3)` | NOT NULL | `0` | % denda keterlambatan per hari (mis. `0.300` = 0,3%/hari). **Hanya disimpan** — belum ada logic yang menghitung/memposting denda pada alur angsuran/pembayaran. |
+| 10 | `suku_bunga_per_tahun` | `DECIMAL(7,4)` | NOT NULL | `0` | Suku bunga per tahun (%) → `kredit.suku_bunga_per_tahun` saat registrasi via `loanStyleId`. Kolom ditambahkan belakangan (`patch_api_loan_style_suku_bunga.sql`, `ALTER ... DEFAULT 0`) — baris yang belum di-`UPDATE` manual (`= 0`) ditolak aplikasi ("Suku bunga loan style belum diisi"), lihat aturan data #12. |
+| 11 | `is_active` | `TINYINT(1)` | NOT NULL | `1` | Nonaktif = tidak dapat dirujuk `loanStyleId`. |
+| 12 | `no_memo` | `VARCHAR(50)` | NULL | | Referensi memo/SK persetujuan BPR — jejak dasar persetujuan *loan style*. |
+| 13 | `dibuat_oleh` | `VARCHAR(20)` | NOT NULL | | Pembuat baris catalog. |
+| 14 | `disetujui_oleh` | `VARCHAR(20)` | NULL | | Pejabat yang menyetujui. |
+| 15 | `created_at` | `DATETIME` | NOT NULL | `CURRENT_TIMESTAMP` | Waktu buat. |
+
+**Index:** `idx_loan_style_lookup` (`kode_produk`, `is_active`).
+
 ### 2.2 Tabel Core Banking IBS (kolom kunci — struktur dikelola IBS)
 
 > Tabel-tabel berikut **milik/berbagi dengan Core Banking IBS**; H2H hanya membaca/menulis
@@ -278,7 +310,25 @@ Mutasi tabungan: `tgl_trans`, `no_rekening` (→`tabung`), `kode_trans`, `my_kod
 Kolom kunci: `nasabah_id` (FK→`nasabah`), `jml_pinjaman`, `suku_bunga_per_tahun`,
 `satuan_waktu_angsuran`(H/M/B), `periode_angsuran`, `jml_angsuran`, `kode_integrasi`,
 `type_kredit`, `tgl_realisasi`, `tgl_jatuh_tempo`, **`kode_kantor`**, `kode_produk`,
-`no_spk`, `status`, `pokok_saldo_akhir`.
+`no_spk`, `status`, `pokok_saldo_akhir`, `provisi` (`DECIMAL(18,2)`), `adm_lainnya`
+(`DECIMAL(18,2)`), `perc_denda` (`DECIMAL(6,3)`) — ketiganya **sudah ada sebelumnya** di
+`kredit` legacy, serta satu kolom **nullable BARU** untuk M-Pay: `loan_style_id` (`BIGINT`,
+referensi `api_loan_style.id` — tanpa FK constraint, konsisten dengan `nasabah_id`).
+*(patch: `patch_kredit_loan_style.sql` — hanya menambah `loan_style_id`.)*
+
+> ⚠️ Fitur loan style M-Pay memetakan `provisi`/`adm_lainnya`/`perc_denda` di atas sebagai
+> snapshot (`plafond × perc_provisi/perc_adm / 100`, dan salinan `perc_denda` catalog) saat
+> registrasi via `loanStyleId` — tapi ketiga kolom **sudah ada di `kredit` sebelum perubahan
+> ini** (bukan kolom baru); patch DB hanya menambah `loan_style_id`. Keempat field ini hanya
+> diisi oleh service ini untuk kredit yang diregistrasi lewat `loanStyleId`
+> (`POST /pinjaman/registrasi`); rekening kredit lama/non-M-Pay yang didaftarkan lewat jalur
+> lama tetap **NULL** di `loan_style_id` (`provisi`/`adm_lainnya`/`perc_denda` tidak disentuh
+> oleh jalur lama). Nilai loan-style adalah **snapshot saat registrasi** — perubahan pada
+> `api_loan_style` belakangan tidak berlaku retroaktif ke kredit yang sudah terdaftar.
+> `perc_denda` di sini **hanya disimpan**; belum ada logic penerapan denda keterlambatan pada
+> alur angsuran (lihat FR-012a di SRS). `suku_bunga_per_tahun` (kolom kredit yang sudah ada
+> sejak awal, di atas) juga ikut diturunkan dari `api_loan_style.suku_bunga_per_tahun` pada
+> jalur `loanStyleId` — bukan kolom baru, tapi cara pengisiannya berubah untuk jalur ini.
 
 #### `kretrans` (entity `Kretrans`) — PK `kretrans_id` `VARCHAR(11)`
 Transaksi kredit: `tgl_trans`, **`kode_kantor`**, `no_rekening` (→`kredit`), `kode_trans`,
@@ -391,6 +441,24 @@ Transaksi deposito: `tgl_trans`, `no_rekening` (→`deposito`), `kode_trans`, `m
    dalam **satu transaksi** dengan UPDATE-nya; baris audit *append-only*. Baris audit tidak dibuat
    bila nilai lama = nilai baru (no-op). Pola yang sama wajib dipakai untuk perubahan kolom
    bernilai uang lain pada rekening existing.
+10. **Loan style & catalog M-Pay** — `kredit.loan_style_id` (kolom baru) serta `provisi`/
+    `adm_lainnya`/`perc_denda`/`suku_bunga_per_tahun` (kolom **yang sudah ada sebelumnya** di
+    `kredit`, kini dipetakan & diisi oleh fitur ini) diisi saat registrasi dari `api_loan_style`
+    (bila `loanStyleId` dikirim); nilai `kodeProduk`/`typeKredit`/`jmlPinjaman` (`plafond`)/
+    `jmlAngsuran` (`tenor`)/`sukuBungaPerTahun` **tidak pernah** berasal langsung dari payload
+    pada alur ini — hanya referensi ke baris catalog yang sudah disetujui bank, pola yang sama
+    dengan aturan #8 untuk campaign saldo minimum. Alur registrasi lama (tanpa `loanStyleId`)
+    tidak berubah.
+11. **Denda keterlambatan belum diterapkan** — `api_loan_style.perc_denda` / `kredit.perc_denda`
+    (0,3%/hari) pada perubahan ini baru berupa kolom data; belum ada logic yang
+    menghitung/memposting denda pada alur angsuran/pembayaran. Metode angsuran tetap **flat**,
+    tanpa penalti pelunasan dipercepat.
+12. **Suku bunga catalog wajib di-backfill sebelum dipakai** — `api_loan_style.suku_bunga_per_tahun`
+    ditambahkan lewat `ALTER ... DEFAULT 0` (`patch_api_loan_style_suku_bunga.sql`) setelah tabel
+    sudah punya baris dari `patch_kredit_loan_style.sql`. `0` bukan suku bunga bisnis yang valid,
+    jadi aplikasi menolak (`BusinessException` "Suku bunga loan style belum diisi") registrasi
+    lewat `loanStyleId` manapun yang masih `suku_bunga_per_tahun <= 0` — mencegah kredit
+    ter-registrasi dengan bunga 0% karena baris catalog belum sempat di-`UPDATE`.
 
 ## 5. DDL (tabel milik H2H)
 
@@ -499,6 +567,41 @@ CREATE TABLE `api_tab_minimum_change` (
     KEY `idx_minimum_change_tgl` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
+-- Master catalog loan style kredit M-Pay (patch_kredit_loan_style.sql)
+CREATE TABLE `api_loan_style` (
+    `id`              BIGINT        NOT NULL AUTO_INCREMENT,
+    `kode_produk`     VARCHAR(5)    NOT NULL,
+    `nama_loan_style` VARCHAR(100)  NOT NULL,
+    `plafond`         DECIMAL(18,2) NOT NULL,
+    `tenor`           INT           NOT NULL,              -- divalidasi aplikasi: hanya 1 atau 3
+    `type_kredit`     VARCHAR(3)    NOT NULL,               -- divalidasi terhadap set typeKredit yang diizinkan
+    `perc_provisi`    DECIMAL(6,3)  NOT NULL DEFAULT 0,
+    `perc_adm`        DECIMAL(6,3)  NOT NULL DEFAULT 0,
+    `perc_denda`      DECIMAL(6,3)  NOT NULL DEFAULT 0,    -- %/hari; belum ada logic penerapan
+    `is_active`       TINYINT(1)    NOT NULL DEFAULT 1,
+    `no_memo`         VARCHAR(50)            DEFAULT NULL, -- referensi persetujuan BPR
+    `dibuat_oleh`     VARCHAR(20)   NOT NULL,
+    `disetujui_oleh`  VARCHAR(20)            DEFAULT NULL,
+    `created_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_loan_style_lookup` (`kode_produk`, `is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- Referensi loan style M-Pay pada kredit: nullable, hanya terisi untuk registrasi via loanStyleId.
+-- kredit.provisi/adm_lainnya/perc_denda TIDAK ditambahkan di sini — kolom tsb SUDAH ADA
+-- sebelumnya di kredit legacy (DECIMAL(18,2)/DECIMAL(18,2)/DECIMAL(6,3), cocok persis); fitur
+-- loan style hanya memetakan & mengisinya saat registrasi via loanStyleId, tanpa patch DB.
+ALTER TABLE `kredit`
+    ADD COLUMN `loan_style_id` BIGINT DEFAULT NULL;
+
+-- Suku bunga per tahun catalog (patch_api_loan_style_suku_bunga.sql — ditambahkan SETELAH
+-- patch_kredit_loan_style.sql di atas, karena api_loan_style sudah punya baris live saat itu).
+-- ⚠️ DEFAULT 0 bukan suku bunga bisnis yang valid — baris existing WAJIB di-UPDATE manual
+-- (lihat contoh di akhir file patch); aplikasi menolak loanStyleId dengan nilai <= 0.
+ALTER TABLE `api_loan_style`
+    ADD COLUMN `suku_bunga_per_tahun` DECIMAL(7,4) NOT NULL DEFAULT 0;
+-- UPDATE `api_loan_style` SET `suku_bunga_per_tahun` = 24.0000 WHERE `id` IN (1,2,3,4,5,6); -- contoh
+
 -- Referensi kode binding bank (ABA)
 CREATE TABLE `api_binding_bank` (
     `id`           BIGINT NOT NULL AUTO_INCREMENT,
@@ -553,6 +656,21 @@ Catatan:
   campaign karena `api_tab_minimum_change.kode_campaign` merujuknya (jejak audit harus tetap dapat
   ditelusuri).
 
+**Catalog `api_loan_style` (*loan style* M-Pay) — belum ada baris seed dengan nilai final.**
+Berbeda dengan `api_tab_campaign`, tabel ini **belum diisi data final** saat patch dijalankan:
+BPR belum mengonfirmasi angka final `perc_provisi`/`perc_adm`/`perc_denda`/`type_kredit`/
+`suku_bunga_per_tahun` per nominal tier (Rp1.000.000 / 2.000.000 / 3.500.000 / 5.000.000 /
+7.500.000 / 10.000.000, tenor 1 atau 3 bulan). `patch_kredit_loan_style.sql` hanya menyertakan
+contoh `INSERT` yang di-*comment* sebagai referensi struktur. Seeder resmi
+(`seed_api_loan_style.sql`, mengikuti konvensi `seed_` yang sama dengan
+`seed_api_tab_campaign.sql`, idempotent) menyusul setelah BPR mengonfirmasi nilainya.
+
+> ⚠️ Jika baris `api_loan_style` **sudah** dibuat (mis. lingkungan dev/staging yang sudah
+> lanjut ke tahap integrasi M-Pay) sebelum `patch_api_loan_style_suku_bunga.sql` dijalankan,
+> baris-baris tsb otomatis mendapat `suku_bunga_per_tahun = 0` dari `DEFAULT 0` ALTER-nya —
+> **wajib** di-`UPDATE` manual dengan suku bunga riil sebelum `loanStyleId`-nya bisa dipakai
+> untuk registrasi (lihat aturan data #12 di atas dan contoh `UPDATE` di §5).
+
 ---
 
 ## 📑 Riwayat Revisi
@@ -564,6 +682,8 @@ Catatan:
 | 1.1.1 | 17 Juli 2026 | | Catatan aturan `jkw` produk *special rate* diperbarui `6/12` → 1/3/6/12 (tanpa perubahan skema). |
 | 1.2.0 | 5 Agustus 2026 | | Nama database dibuat generik: `cma`/`cma_sys` → **`dbcore`/`dbcore_sys`** (nama skema spesifik lembaga tidak dipakai di dokumen yang di-deliver ke klien). Tambah tabel milik H2H `api_tab_campaign` (master campaign saldo minimum) & `api_tab_minimum_change` (jejak audit perubahan `tabung.minimum`) + DDL-nya; patch `patch_tab_campaign_saldo_minimum.sql`. Catatan `tabung.minimum` sebagai kolom bernilai uang & aturan data #8/#9. Tabel legacy `tabung` **tidak** diubah. |
 | 1.2.1 | 6 Agustus 2026 | | Tambah bagian **Seed `api_tab_campaign`** (`seed_api_tab_campaign.sql`): 4 campaign bebas saldo minimum produk 201–204, `saldo_minimum` 0, semua kantor, 2026-08-01 s/d 2026-09-30, `dibuat_oleh` USSI / `disetujui_oleh` B Eko Prasetyo, seeder idempotent, penghentian campaign via `is_active = 0` (bukan `DELETE`). Keterangan kolom `dibuat_oleh`/`disetujui_oleh` diperjelas: boleh `user_id` maupun nama. Tanpa perubahan skema. |
+| 1.3.0 | 25 Agustus 2026 | | CR BPR — pinjaman M-Pay: tambah tabel milik H2H `api_loan_style` (master catalog *loan style*: nominal/tenor & persentase provisi/adm/denda) + DDL-nya; patch `patch_kredit_loan_style.sql` menambah **1 kolom nullable baru** pada `kredit` (`loan_style_id`). `kredit.provisi`/`adm_lainnya`/`perc_denda` **sudah ada sebelumnya** di tabel legacy ini (`DECIMAL(18,2)`/`DECIMAL(18,2)`/`DECIMAL(6,3)`, cocok persis) — fitur ini hanya memetakan & mengisinya sebagai snapshot saat registrasi via `loanStyleId`, **tidak** menambahnya lewat patch. Daftar Tabel §1 dirapikan ulang nomornya (10→27). Aturan data #10/#11 ditambah. **Belum ada seed** `api_loan_style` — menunggu konfirmasi angka BPR; **denda keterlambatan (`perc_denda`) belum diterapkan**, hanya kolom data. |
+| 1.3.1 | 25 Agustus 2026 | | Tambah kolom `api_loan_style.suku_bunga_per_tahun` (`DECIMAL(7,4)`, patch **baru** `patch_api_loan_style_suku_bunga.sql`, `ALTER ... DEFAULT 0` karena tabel sudah punya baris live dari patch sebelumnya) — `kredit.suku_bunga_per_tahun` (kolom lama, bukan baru) sekarang juga diturunkan dari catalog pada jalur `loanStyleId`. Aturan data #12 baru: baris catalog dengan suku bunga `<= 0` (mis. belum di-backfill setelah `ALTER`) ditolak aplikasi. |
 
 ---
 
