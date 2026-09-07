@@ -502,8 +502,8 @@ penggantinya adalah allowlist di atas + jejak audit di bawah.
 |----------|-------------|-------------|-------|
 | `GET /loan-style` | — (`Authorization` + query opsional `kodeProduk`) | — | — (tabel referensi global, tanpa tenant guard) |
 | `/registrasi` | `CreateKreditRequestDTO` | `kodeKantor`,`userId`,`nasabahId`,`tglRealisasi`,`noSpk`,`loanStyleId`(opsional — catalog `api_loan_style`, lihat §4.11.1) — `kodeProduk`,`jmlPinjaman`,`jmlAngsuran`,`satuanWaktuAngsuran`(`[HMB]`),`typeKredit`(`100/200/300/310/350/700/710`),`sukuBungaPerTahun` wajib **hanya** bila `loanStyleId` kosong | `assertOffice(kodeKantor)` |
-| `/jadwal` | `InquiryJadwalKreditRequestDTO` | `noRekening`,`userId` | `assertKreditOffice(noRekening)` |
-| `/tagihan` | `InquiryTagihanKreditRequestDTO` | `noRekening`,`tglTrans`(date),`userId` | `assertKreditOffice(noRekening)` |
+| `/jadwal` | `InquiryJadwalKreditRequestDTO` | `noRekening`,`userId` | `assertKreditOffice(noRekening)` — response berubah bentuk, lihat §4.11.2 |
+| `/tagihan` | `InquiryTagihanKreditRequestDTO` | `noRekening`,`tglTrans`(date),`userId` | `assertKreditOffice(noRekening)` — response berubah bentuk, lihat §4.11.3 |
 | `/saldo` | `InquirySaldoRequestDTO` | `tglTrans`,`noRekening`,`userId` | `assertKreditOffice(noRekening)` |
 | `/list` | `ListKreditRequestDTO` | `kodeKantor`,`noRekening`,`tglHitung`(date),`userId` | `assertOffice(kodeKantor)` |
 
@@ -574,6 +574,89 @@ diekspos pada response body — `noRekening` tetap satu-satunya field response):
 | Kode | HTTP | Kondisi |
 |------|------|---------|
 | `95` | 400 | "Loan style tidak ditemukan" · "Loan style sudah tidak aktif" · "Tenor loan style tidak valid: {n}" · "Suku bunga loan style belum diisi" · (jalur `loanStyleId` kosong) "Kode produk harus diisi" · "Tipe kredit harus diisi" · "Jumlah pinjaman harus diisi" · "Jumlah angsuran harus diisi" · "Satuan waktu angsuran harus diisi" · "Suku bunga pinjaman pertahun diisi". Kredit **tidak** dibuat. |
+
+#### 4.11.2 Bentuk response `/jadwal` (bug fix — perubahan kontrak)
+
+**Sebelum perubahan ini**, `/jadwal` mengembalikan **seluruh** baris `kretrans` milik
+`no_rekening` tanpa filter — termasuk baris pencairan (`my_kode_trans=100`), sehingga item
+pertama response sering kali adalah baris pencairan (`angsuranKe: 0`, `pokok` = plafond penuh,
+`bunga: 0`) yang **bukan** bagian dari jadwal angsuran, muncul mendahului baris `angsuranKe`
+1..N yang sebenarnya.
+
+**Sesudah perubahan ini:** `/jadwal` hanya mengembalikan baris jadwal angsuran murni
+(`my_kode_trans=200`) — baris pencairan dan pembayaran aktual tidak pernah ikut. `responseData`
+juga berubah bentuk dari **array** menjadi **objek** yang membungkus array tsb plus ringkasan
+total:
+
+```json
+{
+  "responseCode": "00",
+  "responseData": {
+    "jadwal": [
+      { "tglTrans": "2026-09-25", "kodeKantor": "001", "noRekening": "001101000328", "angsuranKe": 1, "pokok": 1166667.00, "bunga": 35000.00, "keterangan": "Tagihan ke 1" },
+      { "tglTrans": "2026-10-25", "kodeKantor": "001", "noRekening": "001101000328", "angsuranKe": 2, "pokok": 1166667.00, "bunga": 35000.00, "keterangan": "Tagihan ke 2" },
+      { "tglTrans": "2026-11-25", "kodeKantor": "001", "noRekening": "001101000328", "angsuranKe": 3, "pokok": 1166666.00, "bunga": 35000.00, "keterangan": "Tagihan ke 3" }
+    ],
+    "totalPokok": 3500000.00,
+    "totalBunga": 105000.00
+  },
+  "responseMessage": "Informasi jadwal kredit berhasil ditemukan"
+}
+```
+
+> ⚠️ **Perubahan kontrak (breaking).** Field di dalam `jadwal[]` tidak berubah nama/tipe —
+> hanya dibungkus satu level lebih dalam. Client yang sebelumnya mem-parse `responseData`
+> langsung sebagai array **wajib** diperbarui untuk membaca `responseData.jadwal`. `totalPokok`/
+> `totalBunga` adalah jumlah `pokok`/`bunga` seluruh baris jadwal (setelah baris pencairan
+> dikecualikan) — ditambahkan supaya client tidak perlu menjumlahkan array sendiri.
+
+#### 4.11.3 Bentuk response `/tagihan` (perubahan kontrak breaking — 2026-09-01)
+
+**Sebelum perubahan ini**, `/tagihan` mengembalikan **satu baris** yang cocok persis dengan
+`tglTrans` yang diminta, sehingga nasabah yang terlambat lebih dari satu periode tidak pernah
+melihat angsuran sebelumnya yang juga masih tertunggak.
+
+**Sesudah perubahan ini:** `/tagihan` mengembalikan **seluruh angsuran belum lunas** yang jatuh
+tempo pada atau sebelum `tglTrans`, terurut `angsuranKe` menaik — rekening yang telat satu bulan
+akan menampilkan `angsuranKe: 1` **dan** `angsuranKe: 2` sekaligus bila keduanya belum dibayar.
+`responseData` berubah bentuk dari **array** menjadi **objek** yang membungkus array tersebut
+plus ringkasan total (pola yang sama dengan perubahan `/jadwal` di §4.11.2):
+
+```json
+{
+  "responseCode": "00",
+  "responseData": {
+    "tagihan": [
+      {
+        "tglTrans": "2026-09-25",
+        "kodeKantor": "001",
+        "noRekening": "001101000328",
+        "angsuranKe": 1,
+        "pokok": 1166667.00,
+        "bunga": 35000.00,
+        "denda": 0,
+        "totalTagihan": 1201667.00,
+        "keterangan": "Tagihan ke 1"
+      }
+    ],
+    "totalPokok": 1166667.00,
+    "totalBunga": 35000.00,
+    "totalDenda": 0,
+    "totalTagihan": 1201667.00
+  },
+  "responseMessage": "Informasi tagihan kredit berhasil ditemukan"
+}
+```
+
+> ⚠️ **Perubahan kontrak (breaking).** Request body **tidak berubah**
+> (`{ noRekening, tglTrans, userId }`). Client yang sebelumnya mem-parse `responseData`
+> langsung sebagai satu baris/array **wajib** diperbarui untuk membaca `responseData.tagihan[]`
+> (bisa berisi lebih dari satu baris) beserta `responseData.totalPokok`/`totalBunga`/`totalDenda`/
+> `totalTagihan`. Setiap baris `tagihan[]` bertambah field baru `denda` (placeholder `0`,
+> lihat §4.11.1) dan `totalTagihan` (= `pokok+bunga+denda`); field lama `tunggakanPokok`/
+> `tunggakanBunga` (akumulasi tunggakan level akun) **dihapus** — sudah tidak relevan karena
+> setiap baris kini mewakili satu angsuran spesifik yang belum lunas, dan `totalPokok`/
+> `totalBunga` level-list di atas menggantikan fungsi ringkasannya.
 
 ---
 
@@ -687,16 +770,77 @@ Guard: `assertOffice(kodeKantor)`. Response: `TransKreditPencairanResponseDTO`.
 
 ### 4.15 `POST /api/v1/transaksi/angsuranPinjaman`
 
+> ⚠️ **Perubahan kontrak (breaking) — 2026-09-01.** BPR/M-Pay menghapus dukungan pembayaran
+> sebagian (partial payment): nasabah hanya dapat membayar **satu angsuran penuh** atau tidak
+> sama sekali ("mirip fintech"), dan hanya angsuran **belum lunas paling awal** yang boleh
+> dibayar (tidak boleh melompati angsuran yang masih tertunggak). Field `pokok`/`bunga` pada
+> request **dihapus** — nominal yang diposting selalu diturunkan sistem dari jadwal angsuran
+> (`kretrans`), tidak pernah dipercaya dari client.
+
 **Request Body**
 ```json
 {
-  "tglTrans": "2026-07-16", "angsuranKe": 1, "kuitansi": "KW0003", "kuitansiId": "KWID0003",
-  "tipeTrans": "K1", "kodeKantor": "001", "noRekening": "0020001",
-  "pokok": 400000, "bunga": 50000, "keterangan": "Angsuran ke-1", "userId": "U001"
+  "tglTrans": "2026-09-25",
+  "angsuranKe": 1,
+  "kuitansi": "KWT-0001",
+  "kuitansiId": "K-0001",
+  "tipeTrans": "320",
+  "kodeKantor": "001",
+  "noRekening": "001101000328",
+  "keterangan": "Angsuran ke-1",
+  "userId": "5"
 }
 ```
-`pokok` & `bunga` ≥ 0; `kuitansiId` ≤ 18 karakter. Guard: `assertOffice(kodeKantor)`.
-Response: `TransKreditAngsuranResponseDTO`.
+
+| Field | Tipe | Wajib | Keterangan |
+|-------|------|-------|------------|
+| `angsuranKe` | number | Ya | Angsuran yang ingin dibayar (dari hasil `/pinjaman/tagihan`, §4.11.3); server **memvalidasi** ini harus == angsuran belum lunas paling awal, tidak lagi sekadar dicatat. |
+| `pokok` / `bunga` | — | **Dihapus** | ⚠️ Sebelumnya dikirim client dan dipercaya langsung; sekarang **tidak ada lagi** pada request — nilai selalu dihitung server dari jadwal (`kretrans` `my_kode_trans=200`). |
+| `kuitansiId` | string | Ya | ≤ 18 karakter. |
+| lainnya (`tglTrans`,`kuitansi`,`tipeTrans`,`kodeKantor`,`noRekening`,`keterangan`,`userId`) | | Ya | Tidak berubah dari sebelumnya. |
+
+Guard: rantai standar (§5) lalu `assertOffice(kodeKantor)`, kemudian tiga pemeriksaan urutan
+pembayaran (lihat tabel kode error di bawah) dijalankan **di dalam** lock pessimistic-write
+kredit, sebelum pengecekan saldo cukup.
+
+**Response — 200 OK**
+```json
+{
+  "responseCode": "00",
+  "responseData": {
+    "transId": 123456,
+    "kuitansi": "KWT-0001",
+    "kuitansi_id": "K-0001",
+    "noRekening": "001101000328",
+    "tglTrans": "2026-09-25",
+    "jamTrans": "10:15:30",
+    "pokok": 1166667.00,
+    "bunga": 35000.00,
+    "denda": 0,
+    "totalAngsuran": 1201667.00
+  },
+  "responseMessage": "Angsuran pinjaman sukses"
+}
+```
+
+> `pokok`/`bunga`/`totalAngsuran` pada response adalah nilai **yang benar-benar diposting**
+> (diturunkan server dari jadwal), bukan echo dari request. `denda` adalah placeholder `0` —
+> perhitungan denda keterlambatan 0,3%/hari masih belum diimplementasikan (lihat §4.11.1).
+
+**Kode error khusus (pembayaran sekuensial)**
+
+| Kode | HTTP | Kondisi |
+|------|------|---------|
+| `95` | 400 | "Pinjaman sudah lunas, tidak ada tagihan yang harus dibayar" — tidak ada angsuran belum lunas tersisa. |
+| `95` | 400 | "Angsuran ke-{N} sudah dibayar" — `angsuranKe` yang diminta lebih awal dari angsuran belum lunas paling awal (sudah lunas). |
+| `95` | 400 | "Angsuran ke-{N} harus dibayar terlebih dahulu" — `angsuranKe` yang diminta melompati angsuran belum lunas paling awal; `{N}` = angsuran yang harus dibayar lebih dulu. |
+| `95` | 400 | "Data jadwal angsuran tidak valid" — guard integritas data jadwal (kondisi langka, seharusnya tidak terjadi pada operasi normal). |
+
+Guard-guard lama tetap berjalan lebih dulu dan tidak berubah urutannya: "Kode kantor tidak
+sesuai dengan data rekening" → "Tipe transaksi tidak tersedia" → "Kuitansi id duplikat" → "No
+rekening pinjaman sudah tidak aktif" → *(baru setelah itu)* tiga pemeriksaan sekuensial di atas
+→ "Transaksi ditolak: saldo akun debet tidak mencukupi" (sekarang dicek terhadap total yang
+diturunkan server, bukan nominal kiriman client).
 
 ---
 
@@ -837,6 +981,8 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 | 1.3.1 | 25 Agustus 2026 | | Tambah `GET /pinjaman/loan-style` (§4.11) — daftar catalog `api_loan_style` aktif (opsional filter `kodeProduk`), dipakai M-Pay untuk memuat pilihan dropdown sebelum mengirim `loanStyleId` ke `/registrasi`. JWT-only, tanpa `X-IDEMPOTENCY-KEY`/tenant guard (referensi global), pola sama dengan `GET /deposito/produk-spesial-rate`. Tidak ada kode response baru. |
 | 1.3.2 | 25 Agustus 2026 | | §4.11.1 diperluas: `kodeProduk` sekarang juga diturunkan dari `api_loan_style` bila `loanStyleId` diisi (M-Pay tidak perlu/tidak boleh mengirim `kodeProduk`) — sebelumnya field ini tetap wajib di kedua jalur. Pengecekan "loan style tidak berlaku untuk kode produk tersebut" dihapus (tidak relevan lagi, tidak ada nilai client untuk dicocokkan); daftar kode error `95` diperbarui. |
 | 1.3.3 | 25 Agustus 2026 | | §4.11 & §4.11.1 diperluas: `sukuBungaPerTahun` sekarang juga diturunkan dari `api_loan_style.suku_bunga_per_tahun` (kolom baru) bila `loanStyleId` diisi — M-Pay tidak perlu/tidak boleh mengirim suku bunga. `GET /loan-style` menambahkan `sukuBungaPerTahun` pada response. Kode error `95` baru: "Suku bunga loan style belum diisi" (catalog dengan suku bunga `<= 0`, mis. baris lama yang belum di-backfill setelah `ALTER ... DEFAULT 0`, ditolak). |
+| 1.4.0 | 27 Agustus 2026 | | Bug fix + **perubahan kontrak breaking**: `/jadwal` tidak lagi mengembalikan baris pencairan (`my_kode_trans=100`) tercampur dalam jadwal angsuran (§4.11.2 baru). `responseData` berubah dari array menjadi objek `{ jadwal: [...], totalPokok, totalBunga }` — field di dalam `jadwal[]` tidak berubah, client wajib membaca `responseData.jadwal`. |
+| 1.5.0 | 1 September 2026 | | **Perubahan kontrak breaking** pada dua endpoint kredit (keputusan BPR/M-Pay — angsuran pinjaman sekuensial, tanpa partial payment): `/pinjaman/tagihan` sekarang mengembalikan seluruh angsuran belum lunas terurut `angsuranKe` (§4.11.3 baru), bukan satu baris; `/transaksi/angsuranPinjaman` tidak lagi menerima `pokok`/`bunga` dari client (nilai diturunkan server dari jadwal) dan hanya menerima `angsuranKe` yang merupakan angsuran belum lunas paling awal (§4.15) — response-nya bertambah `pokok`/`bunga`/`denda`/`totalAngsuran`. Kode error baru (tetap `95`): "Pinjaman sudah lunas, tidak ada tagihan yang harus dibayar" · "Angsuran ke-N sudah dibayar" · "Angsuran ke-N harus dibayar terlebih dahulu" · "Data jadwal angsuran tidak valid". Tidak ada kode response baru maupun perubahan skema DB. |
 
 ---
 

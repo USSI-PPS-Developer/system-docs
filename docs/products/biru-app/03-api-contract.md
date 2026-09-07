@@ -6,8 +6,9 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | API Contract        |
-| Versi             | 1.0.0               |
+| Versi             | 1.0.1               |
 | Tanggal Dibuat    | 30 Juli 2026        |
+| Terakhir Diperbarui | 7 September 2026  |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
 | Direview oleh     |                     |
@@ -173,9 +174,8 @@ Penolakan dari lapisan keamanan dan administrasi:
 | `LOCKED` | 423 | Akun terkunci sementara karena gagal login berturut-turut |
 | `WEAK_PASSWORD` | 400 | Password baru tidak memenuhi panjang minimum |
 | `NOT_FOUND` | 404 | Pengguna yang dimaksud tidak ada (administrasi) |
-| `NOT_ALLOWED` | 409 | Penolakan aturan administrasi (mis. ADMIN aktif terakhir) |
-| `CONFLICT` | 409 | Pelanggaran keunikan (mis. username sudah dipakai) |
-| `BAD_REQUEST` | 400 | Masukan administrasi tidak valid |
+| `NOT_ALLOWED` | 409 | Penolakan aturan administrasi (mis. ADMIN aktif terakhir) **atau** pelanggaran keunikan (mis. username sudah dipakai) — keduanya memakai kode yang sama |
+| `INVALID` | 400 | Masukan administrasi tidak valid (`IllegalArgumentException` di layanan administrasi) |
 
 Kesalahan validasi `@Valid` pada body dan kesalahan tipe parameter (mis. `date=31-07-2026`)
 dikembalikan dalam **format error bawaan Spring Boot** (`timestamp`, `status`, `error`, `path`),
@@ -709,7 +709,7 @@ pengguna yang login. Endpoint administrasi sengaja **tidak** diletakkan di bawah
 
 **`201 Created`** — badan berbentuk seperti elemen §8.1. Akun baru selalu `mustChangePassword=true`.
 
-**Error**: `400` (validasi) · `409 CONFLICT` (username sudah ada).
+**Error**: `400 INVALID` (validasi `@Valid`) · `409 NOT_ALLOWED` (username sudah ada — baik dari pemeriksaan `create` maupun dari pelanggaran `uk_app_user_username` saat dua permintaan bentrok).
 
 ### 8.3 `PATCH /api/v1/admin/users/{id}`
 
@@ -895,6 +895,7 @@ curl https://biru.bpr.local/actuator/prometheus -H "X-API-Key: $BIRU_API_KEY"
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
+| 1.0.1 | 7 September 2026 | | Diverifikasi ulang terhadap kode saat ini. Perbaikan §2.6 & §8.2: kode error administrasi yang sebenarnya dikembalikan `AdminExceptionHandler` adalah `INVALID` (400, bukan `BAD_REQUEST`) dan `NOT_ALLOWED` (409, dipakai juga untuk pelanggaran keunikan username — bukan `CONFLICT` yang terpisah) |
 
 ---
 

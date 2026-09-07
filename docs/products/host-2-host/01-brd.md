@@ -118,6 +118,8 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
 | BR-020 | Nilai saldo minimum **tidak boleh ditentukan oleh aplikasi konsumen**. | Wajib | Nilai selalu diturunkan sistem dari campaign atau default produk; payload tidak memiliki field nominal. Konsumen hanya merujuk campaign yang sudah disetujui. |
 | BR-021 | Setiap perubahan saldo minimum rekening wajib meninggalkan **jejak audit lengkap** (nilai asal → nilai baru, pelaku, waktu, alasan, dasar campaign). | Wajib | Ditulis ke `api_tab_minimum_change` dalam **satu transaksi** dengan perubahan rekeningnya, bersifat *append-only* → perubahan selalu dapat dibuktikan dan dibalikkan. |
 | BR-022 | Perubahan saldo minimum via API hanya boleh dilakukan **pejabat/supervisor yang ditunjuk**. | Wajib | Keputusan BPR: alur API **tanpa maker-checker** (berbeda dengan otorisasi backoffice CBS); kontrol pengganti = allowlist `tabung.minimum-editor-user-ids` (fail-closed bila kosong) + jejak audit BR-021. |
+| BR-023 | Pembayaran angsuran pinjaman via API **tidak boleh sebagian** (partial payment) — nasabah hanya dapat membayar satu angsuran penuh atau tidak membayar sama sekali. | Wajib | Keputusan BPR/M-Pay ("mirip fintech"); nominal pokok/bunga tidak lagi diterima dari aplikasi konsumen, selalu diturunkan sistem dari jadwal angsuran. |
+| BR-024 | Angsuran hanya boleh dibayar **berurutan mulai dari yang paling awal belum lunas** — tidak boleh melompati angsuran yang masih tertunggak, meskipun nasabah terlambat lebih dari satu periode. | Wajib | `POST /transaksi/angsuranPinjaman` menolak `angsuranKe` selain angsuran belum lunas paling awal; `POST /pinjaman/tagihan` menampilkan seluruh angsuran tertunggak agar kanal tahu urutan yang harus dibayar. |
 
 ## 6. Proses Bisnis
 
@@ -181,6 +183,7 @@ uang.
 | RB-008 | Brute-force login | Pengambilalihan akun | Throttle 5x/60s per (username+IP) sebelum verifikasi password. |
 | RB-009 | Saldo minimum diturunkan tanpa dasar/otorisasi (alur API tanpa maker-checker) → dana yang dapat ditarik naik | Kerugian finansial, temuan audit | Nilai hanya dari campaign yang disetujui (bukan dari payload) + allowlist `tabung.minimum-editor-user-ids` (fail-closed) + jejak audit `api_tab_minimum_change` dalam satu transaksi (dapat dibuktikan & dibalikkan) + office scope `assertTabungOffice`. |
 | RB-010 | Campaign kedaluwarsa tetapi rekening tetap bebas saldo minimum | Pendapatan/kebijakan produk tidak tertagih | Campaign punya `tgl_mulai`/`tgl_akhir` (registrasi otomatis kembali ke default setelah periode habis); rekening existing dikembalikan dengan aksi `DEFAULT_PRODUK` — nilai asal tersimpan di `api_tab_minimum_change.minimum_lama`. |
+| RB-011 | Nasabah/kanal mencoba membayar sebagian atau melompati angsuran yang tertunggak | Rekonsiliasi jadwal kacau, saldo pinjaman tidak sinkron dengan jadwal | Server menolak (`95`) pembayaran selain angsuran belum lunas paling awal; nominal yang diposting selalu diturunkan dari jadwal, bukan dari client (BR-023, BR-024). |
 
 ## 9. Kriteria Penerimaan (Acceptance Criteria)
 
@@ -203,6 +206,12 @@ uang.
   campaign; request dengan nilai yang sama tidak menghasilkan baris audit.
 - Pengguna di luar allowlist `tabung.minimum-editor-user-ids` ditolak (403) saat mencoba
   mengubah saldo minimum; allowlist kosong = semua ditolak.
+- Permintaan `POST /transaksi/angsuranPinjaman` dengan `angsuranKe` selain angsuran belum lunas
+  paling awal ditolak (`95`), begitu pula bila seluruh angsuran sudah lunas; nominal yang
+  diposting selalu sama dengan jadwal (`kretrans`), tidak pernah diambil dari body request.
+- `POST /pinjaman/tagihan` menampilkan seluruh angsuran belum lunas yang jatuh tempo hingga
+  tanggal inquiry (bukan hanya satu baris), sehingga nasabah yang telat lebih dari satu periode
+  tetap melihat seluruh tunggakannya.
 
 ---
 
@@ -213,6 +222,7 @@ uang.
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | Ruang lingkup deposito diperluas: produk *special rate* (suku bunga kustom) & daftar produknya. |
 | 1.2.0 | 5 Agustus 2026 | | Nama database dibuat generik: `cma`/`cma_sys` → **`dbcore`/`dbcore_sys`** (nama skema spesifik lembaga tidak dipakai di dokumen yang di-deliver ke klien). Campaign **bebas saldo minimum** tabungan (permintaan BPR Sentosa): BR-019..BR-022 (campaign sebagai master data yang disetujui, nilai tidak dari payload, jejak audit wajib, allowlist pengganti maker-checker), risiko RB-009/RB-010, dan kriteria penerimaan terkait. |
+| 1.3.0 | 1 September 2026 | | BR-023/BR-024 baru (keputusan BPR/M-Pay): pembayaran angsuran pinjaman tidak boleh sebagian (partial payment) dan hanya angsuran belum lunas paling awal yang boleh dibayar (tidak boleh melompat). RB-011 baru & kriteria penerimaan terkait ditambahkan. |
 
 ---
 

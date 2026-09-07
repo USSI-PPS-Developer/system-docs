@@ -45,6 +45,25 @@
 | TC-213 | Kredit — `GET /loan-style` | `kodeProduk` kosong/tidak dikirim mengembalikan seluruh catalog aktif (semua produk) | Sedang | Positif |
 | TC-214 | Kredit — registrasi lama (non-M-Pay) | Tanpa `loanStyleId`, `kodeProduk` kosong ditolak `95` | Sedang | Negatif |
 | TC-216 | Kredit — registrasi lama (non-M-Pay) | Tanpa `loanStyleId`, `sukuBungaPerTahun` kosong ditolak `95` | Sedang | Negatif |
+| TC-301 | Kredit — tagihan sekuensial | `/pinjaman/tagihan` untuk rekening tidak ditemukan | Tinggi | Negatif |
+| TC-302 | Kredit — tagihan sekuensial | Satu angsuran outstanding → `denda=0`, `totalTagihan=pokok+bunga` | Tinggi | Positif |
+| TC-303 | Kredit — tagihan sekuensial | Beberapa angsuran telat (overdue) dikembalikan terurut `angsuranKe` dengan total yang benar | Tinggi | Positif |
+| TC-304 | Kredit — tagihan sekuensial | Tidak ada tunggakan → `tagihan` kosong, seluruh total nol | Sedang | Positif |
+| TC-305 | Kredit — tagihan sekuensial | Regresi: query tunggakan akumulatif lama (`getTunggakanPokok`/`getTunggakanBunga`) tidak lagi dipanggil dari `/tagihan` | Sedang | Positif |
+| TC-306 | Kredit — angsuran sekuensial | `POST /transaksi/angsuranPinjaman` membayar angsuran belum lunas paling awal; `pokok`/`bunga` diturunkan server, response berisi `pokok`/`bunga`/`denda`/`totalAngsuran` yang benar | Tinggi | Positif |
+| TC-307 | Kredit — angsuran sekuensial | Pinjaman sudah lunas ditolak `95` ("Pinjaman sudah lunas, tidak ada tagihan yang harus dibayar") | Tinggi | Negatif |
+| TC-308 | Kredit — angsuran sekuensial | `angsuranKe` yang sudah dibayar ditolak `95` ("Angsuran ke-N sudah dibayar") | Tinggi | Negatif |
+| TC-309 | Kredit — angsuran sekuensial | `angsuranKe` melompati angsuran belum lunas paling awal (skip-ahead) ditolak `95` ("Angsuran ke-N harus dibayar terlebih dahulu") | Tinggi | Negatif |
+| TC-310 | Kredit — angsuran sekuensial | Guard "Kode kantor tidak sesuai dengan data rekening" tetap berjalan lebih dulu daripada pemeriksaan sekuensial baru | Sedang | Negatif |
+| TC-311 | Kredit — angsuran sekuensial | Guard "Tipe transaksi tidak tersedia" tetap berjalan lebih dulu daripada pemeriksaan sekuensial baru | Sedang | Negatif |
+| TC-312 | Kredit — angsuran sekuensial | Guard "Kuitansi id duplikat" tetap berjalan lebih dulu daripada pemeriksaan sekuensial baru | Sedang | Negatif |
+| TC-313 | Kredit — angsuran sekuensial | Guard "No rekening pinjaman sudah tidak aktif" (pinjaman ditutup) tetap berjalan lebih dulu daripada pemeriksaan sekuensial baru | Sedang | Negatif |
+| TC-314 | Kredit — angsuran sekuensial | Guard saldo tidak mencukupi tetap berjalan, diperiksa terhadap total `pokok+bunga` yang diturunkan server (bukan nominal client) | Tinggi | Negatif |
+| TC-401 | Kredit — skenario end-to-end (tanpa loan style) | Registrasi kredit legacy (tanpa `loanStyleId`) → `noRekening` baru, jadwal 3 periode ter-generate | Tinggi | Positif |
+| TC-402 | Kredit — skenario end-to-end (tanpa loan style) | Pencairan (`C1`, ke tabungan) berhasil untuk rekening hasil TC-401 | Tinggi | Positif |
+| TC-403 | Kredit — skenario end-to-end (tanpa loan style) | `POST /pinjaman/jadwal` menampilkan seluruh 3 periode jadwal beserta total pokok/bunga | Sedang | Positif |
+| TC-404 | Kredit — skenario end-to-end (tanpa loan style) | `POST /pinjaman/tagihan` pada tanggal jatuh tempo ke-1 menampilkan tagihan yang harus dibayar | Tinggi | Positif |
+| TC-405 | Kredit — skenario end-to-end (tanpa loan style) | `POST /transaksi/angsuranPinjaman` melunasi angsuran ke-1 berdasarkan hasil TC-404 | Tinggi | Positif |
 
 ---
 
@@ -151,6 +170,76 @@ TC-215/TC-216 ditambah pada tanggal yang sama untuk cakupan `sukuBungaPerTahun`.
 **Catatan:** Endpoint read-only, tanpa `X-IDEMPOTENCY-KEY`/rate limit/tenant guard (referensi
 global, sama pola dengan `GET /deposito/produk-spesial-rate`).
 
+### TC-301..TC-314 — Angsuran pinjaman sekuensial, tanpa partial payment (M-Pay)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | Kredit — `/pinjaman/tagihan` & `/transaksi/angsuranPinjaman` sekuensial (FR-012, FR-016) |
+| Prioritas | Tinggi |
+| Pre-condition | Rekening pinjaman `001101000328` terdaftar dengan jadwal angsuran (`kretrans` `my_kode_trans=200`) 3 periode: ke-1 (`2026-09-25`, pokok 1.166.667, bunga 35.000), ke-2 (`2026-10-25`, pokok 1.166.667, bunga 35.000), ke-3 (`2026-11-25`, pokok 1.166.666, bunga 35.000); tidak ada baris `my_kode_trans=300` (belum ada pembayaran); token access valid dengan `kode_kantor` sesuai rekening |
+| Test Data | `noRekening=001101000328`, `kodeKantor=001`, `userId=5`; `tglTrans` inquiry `2026-10-26` (melewati jatuh tempo ke-1 & ke-2) untuk skenario tunggakan ganda (TC-303) |
+
+**Langkah Pengujian**
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 (TC-301) | `POST /pinjaman/tagihan` dengan `noRekening` yang tidak ada | HTTP 400/404 sesuai perilaku "rekening tidak ditemukan" yang sudah ada (tidak berubah) | | ⬜ Belum |
+| 2 (TC-302) | `POST /pinjaman/tagihan` dengan `tglTrans=2026-09-25`, hanya angsuran ke-1 yang jatuh tempo & belum dibayar | `00`; `tagihan` berisi 1 baris `angsuranKe=1`, `denda=0`, `totalTagihan=1201667.00` (=pokok+bunga); `totalPokok/totalBunga/totalDenda/totalTagihan` list-level sama dengan baris tsb | | ⬜ Belum |
+| 3 (TC-303) | `POST /pinjaman/tagihan` dengan `tglTrans=2026-10-26` (angsuran ke-1 & ke-2 sama-sama telat & belum dibayar) | `00`; `tagihan` berisi 2 baris terurut `angsuranKe: 1, 2`; `totalPokok=2333334.00`, `totalBunga=70000.00`, `totalDenda=0`, `totalTagihan=2403334.00` | | ⬜ Belum |
+| 4 (TC-304) | Tandai seluruh 3 angsuran sudah dibayar (ada baris `my_kode_trans=300` untuk tiap `angsuran_ke`), ulangi `/tagihan` | `00`; `tagihan=[]` (array kosong); `totalPokok=totalBunga=totalDenda=totalTagihan=0` | | ⬜ Belum |
+| 5 (TC-305) | (Regresi, verifikasi kode/log) Panggil `/tagihan` beberapa kali | Query akumulasi tunggakan lama (`getTunggakanPokok`/`getTunggakanBunga`) **tidak** dieksekusi dari path ini (tetap dipakai `listTransKredit`/riwayat) | | ⬜ Belum |
+| 6 (TC-306) | `POST /transaksi/angsuranPinjaman` `{noRekening:001101000328, angsuranKe:1, kuitansi:"KWT-0001", kuitansiId:"K-0001", tipeTrans:"320", kodeKantor:001, userId:5}` (tanpa `pokok`/`bunga`) — angsuran ke-1 memang yang paling awal belum lunas | `00`; posting pokok=1166667.00, bunga=35000.00 (dari jadwal, bukan dari request yang memang tidak mengirimkannya); response `TransKreditAngsuranResponseDTO` berisi `pokok`, `bunga`, `denda=0`, `totalAngsuran=1201667.00` | | ⬜ Belum |
+| 7 (TC-307) | Tandai seluruh angsuran sudah dibayar, ulangi `/transaksi/angsuranPinjaman` dengan `angsuranKe` mana pun | HTTP 400 `95`, "Pinjaman sudah lunas, tidak ada tagihan yang harus dibayar"; tidak ada posting | | ⬜ Belum |
+| 8 (TC-308) | Angsuran ke-1 sudah dibayar (baris `my_kode_trans=300` ada), kirim `angsuranKe=1` lagi | HTTP 400 `95`, "Angsuran ke-1 sudah dibayar"; tidak ada posting | | ⬜ Belum |
+| 9 (TC-309) | Angsuran ke-1 **belum** dibayar, kirim `angsuranKe=2` (melompat) | HTTP 400 `95`, "Angsuran ke-1 harus dibayar terlebih dahulu"; tidak ada posting | | ⬜ Belum |
+| 10 (TC-310) | Kirim `kodeKantor` yang tidak sesuai dengan kantor pemilik rekening | HTTP 400 `95`, "Kode kantor tidak sesuai dengan data rekening" — ditolak **sebelum** pemeriksaan sekuensial dijalankan | | ⬜ Belum |
+| 11 (TC-311) | Kirim `tipeTrans` yang tidak terdaftar sebagai tipe integrasi angsuran | HTTP 400 `95`, "Tipe transaksi tidak tersedia" — ditolak sebelum pemeriksaan sekuensial | | ⬜ Belum |
+| 12 (TC-312) | Kirim `kuitansiId` yang sudah pernah dipakai (duplikat) | HTTP 400 `95`, "Kuitansi id duplikat" — ditolak sebelum pemeriksaan sekuensial | | ⬜ Belum |
+| 13 (TC-313) | Rekening pinjaman berstatus tidak aktif/ditutup | HTTP 400 `95`, "No rekening pinjaman sudah tidak aktif" — ditolak sebelum pemeriksaan sekuensial | | ⬜ Belum |
+| 14 (TC-314) | Saldo akun debet (kas/tabungan pembayar) tidak mencukupi total `pokok+bunga` angsuran ke-1 yang diturunkan server | HTTP 400 `95`, "Transaksi ditolak: saldo akun debet tidak mencukupi" — diperiksa terhadap total server-derived, bukan nominal client (yang memang sudah tidak dikirim) | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Mengikuti `services/JadwalKreditServiceTest$GetTagihanKredit` (5 kasus: TC-301..TC-305)
+dan `services/KretransServiceTest$TransKreditAngsuran` (9 kasus: TC-306..TC-314) di repo
+`microservice-core`. Kasus usang `TransactionAmountValidationTest.angsuranPokokBunga` **dihapus**
+dari suite karena memvalidasi `@DecimalMin` pada field `pokok`/`bunga` yang sudah tidak ada lagi
+pada `TransKreditAngsuranRequestDTO`. `denda` tetap placeholder `0` pada kedua endpoint — belum
+ada perhitungan/posting denda keterlambatan pada perubahan ini (lihat catatan TC-201..TC-216).
+
+### TC-401..TC-405 — Skenario end-to-end: registrasi (tanpa loan style) → pencairan → jadwal → tagihan → angsuran
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | Kredit — alur lengkap registrasi legacy s.d. pembayaran angsuran pertama (FR-012, FR-016) |
+| Prioritas | Tinggi |
+| Pre-condition | Nasabah `NSB001` sudah terdaftar & terverifikasi di kantor `001`; token access valid dengan `kode_kantor=001`; rekening tabungan pencairan `0010001` (kantor `001`) sudah ada & aktif; produk kredit `710` (`type_kredit=100`, flat) tersedia di `kred_produk` |
+| Test Data | `kodeKantor=001`, `userId=5`, `nasabahId=NSB001`, `noSpk=SPK-002`, `kodeProduk=710`, `typeKredit=100`, `jmlPinjaman=3500000`, `jmlAngsuran=3`, `satuanWaktuAngsuran=B`, `sukuBungaPerTahun=12`, `tglRealisasi=2026-08-25` — **`loanStyleId` sengaja tidak disertakan** (jalur registrasi lama/non-M-Pay, lihat §4.11.1 di `03-api-contract.md`) |
+
+Skenario ini adalah "cerita asal" rekening `001101000328` beserta jadwal 3 periode
+(pokok 1.166.667/1.166.667/1.166.666, bunga 35.000/periode) yang menjadi pre-condition di
+TC-301..TC-314 (angsuran sekuensial) — flat, 3 bulan, plafond 3.500.000, suku bunga 12%/tahun
+menghasilkan angka yang identik (`3.500.000 × 12% ÷ 12 = 35.000` per periode).
+
+**Langkah Pengujian**
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 (TC-401) | `POST /pinjaman/registrasi` dengan Test Data di atas, **tanpa** `loanStyleId` — body: `{"kodeKantor":"001","userId":"5","nasabahId":"NSB001","kodeProduk":"710","jmlPinjaman":3500000,"jmlAngsuran":3,"satuanWaktuAngsuran":"B","typeKredit":"100","sukuBungaPerTahun":12,"tglRealisasi":"2026-08-25","noSpk":"SPK-002"}` | `00`; `responseData={"noRekening":"001101000328"}` (contoh); `kredit` tersimpan dengan field persis sesuai payload (`loanStyleId`/`provisi`/`admLainnya`/`percDenda` NULL, jalur legacy); jadwal angsuran 3 periode langsung ter-generate ke `kretrans` (`my_kode_trans=200`) saat registrasi — **belum** menunggu pencairan | | ⬜ Belum |
+| 2 (TC-402) | `POST /transaksi/pencairanPinjaman` — body: `{"tglTrans":"2026-08-25","kuitansi":"KW-P001","kuitansiId":"KWID-P001","tipeTrans":"C1","kodeKantor":"001","noRekening":"001101000328","nominal":3500000,"keterangan":"Pencairan pinjaman","userId":"5","noRekeningTabungan":"0010001"}` (nominal = `jmlPinjaman` — wajib sama, validator `ValidNominalHarusSamaDenganPinjaman`) | `00`; dana 3.500.000 masuk ke rekening tabungan `0010001`; `kredit` status aktif; jadwal (TC-401) tidak berubah — pencairan tidak menyentuh `my_kode_trans=200` | | ⬜ Belum |
+| 3 (TC-403) | `POST /pinjaman/jadwal` — body: `{"noRekening":"001101000328","userId":"5"}` | `00`; `responseData.jadwal` berisi 3 baris: `angsuranKe 1` (`tglTrans=2026-09-25`, `pokok=1166667.00`, `bunga=35000.00`), `angsuranKe 2` (`2026-10-25`, `1166667.00`/`35000.00`), `angsuranKe 3` (`2026-11-25`, `1166666.00`/`35000.00`); `totalPokok=3500000.00`, `totalBunga=105000.00` (lihat §4.11.2 `03-api-contract.md` untuk bentuk lengkap) | | ⬜ Belum |
+| 4 (TC-404) | `POST /pinjaman/tagihan` — body: `{"noRekening":"001101000328","tglTrans":"2026-09-25","userId":"5"}` (tanggal jatuh tempo angsuran ke-1, belum ada pembayaran sama sekali) | `00`; `responseData.tagihan` berisi 1 baris `angsuranKe=1`, `pokok=1166667.00`, `bunga=35000.00`, `denda=0`, `totalTagihan=1201667.00`; total list-level sama dengan baris tsb (lihat §4.11.3) | | ⬜ Belum |
+| 5 (TC-405) | `POST /transaksi/angsuranPinjaman` — body: `{"tglTrans":"2026-09-25","angsuranKe":1,"kuitansi":"KWT-0001","kuitansiId":"K-0001","tipeTrans":"320","kodeKantor":"001","noRekening":"001101000328","keterangan":"Angsuran ke-1","userId":"5"}` (angsuranKe diambil dari hasil TC-404; **tanpa** `pokok`/`bunga` — field tsb sudah dihapus dari request, lihat §4.15) | `00`; posting `pokok=1166667.00`, `bunga=35000.00` (diturunkan server dari jadwal, sama persis dengan TC-404, bukan dikirim client); `responseData` berisi `pokok`,`bunga`,`denda=0`,`totalAngsuran=1201667.00`; mengulang `POST /pinjaman/tagihan` sesudahnya untuk `tglTrans=2026-09-25` mengembalikan `tagihan=[]` (angsuran ke-1 sudah lunas, angsuran ke-2 belum jatuh tempo) | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Skenario ini menautkan alur **registrasi kredit legacy** (§4.11.1, jalur tanpa
+`loanStyleId` — tetap dipakai channel non-M-Pay) dengan alur **pencairan → jadwal → tagihan →
+angsuran** dari TC-301..TC-314, sebagai satu jalur pengujian penuh (bukan per-endpoint terisolasi).
+Berguna untuk SIT/UAT sebagai naskah demo end-to-end. Tidak menambah kasus unit test baru di
+`microservice-core` — setiap langkah sudah tercakup oleh test unit yang ada per endpoint
+(`KreditServiceTest$LegacyPath`, `services/JadwalKreditServiceTest`, `services/KretransServiceTest`);
+blok ini murni menyusun urutannya sebagai skenario bisnis yang bisa langsung dieksekusi manual
+di lingkungan SIT/UAT.
+
 ## 3. Rekapitulasi
 
 | Status | Jumlah |
@@ -172,6 +261,8 @@ global, sama pola dengan `GET /deposito/produk-spesial-rate`).
 | 1.2.1 | 25 Agustus 2026 | | Tambah TC-212..TC-213: `GET /pinjaman/loan-style` — filter `kodeProduk` vs seluruh catalog aktif. Mengikuti `services/KreditServiceTest$GetLoanStyle` (2 kasus). |
 | 1.2.2 | 25 Agustus 2026 | | TC-204 direvisi: `kodeProduk` sekarang diturunkan dari `api_loan_style` (bukan dicocokkan), jadi skenario "loan style beda kode produk" diganti jadi "kodeProduk kiriman client diabaikan" (Positif, bukan Negatif). Tambah TC-214: `kodeProduk` kosong pada jalur legacy ditolak `95`. Mengikuti `KreditServiceTest$LoanStylePath.ignoresClientSentKodeProduk` + `LegacyPath.missingKodeProduk`. |
 | 1.2.3 | 25 Agustus 2026 | | TC-204 diperluas mencakup `sukuBungaPerTahun` juga diabaikan (bukan cuma `kodeProduk`). Tambah TC-215: `loanStyleId` dengan `suku_bunga_per_tahun<=0` (belum di-backfill) ditolak `95`. Tambah TC-216: `sukuBungaPerTahun` kosong pada jalur legacy ditolak `95`. TC-212 diperbarui: response `GET /loan-style` sekarang memuat `sukuBungaPerTahun`. Mengikuti `KreditServiceTest$LoanStylePath.ignoresClientSentKodeProdukAndSukuBunga`/`sukuBungaNotSet` + `LegacyPath.missingSukuBunga`. |
+| 1.3.0 | 1 September 2026 | | Tambah TC-301..TC-314: pembayaran angsuran pinjaman sekuensial tanpa partial payment (keputusan BPR/M-Pay) — `/pinjaman/tagihan` mengembalikan seluruh angsuran belum lunas (bukan satu baris); `/transaksi/angsuranPinjaman` menolak pembayaran sebagian/melompat dan menurunkan `pokok`/`bunga` dari jadwal server-side. Mengikuti `services/JadwalKreditServiceTest$GetTagihanKredit` (5 kasus) & `services/KretransServiceTest$TransKreditAngsuran` (9 kasus). Kasus usang `TransactionAmountValidationTest.angsuranPokokBunga` dihapus (field `pokok`/`bunga` tidak lagi ada pada request DTO). |
+| 1.3.1 | 1 September 2026 | | Tambah TC-401..TC-405: skenario end-to-end registrasi kredit **tanpa** `loanStyleId` (jalur legacy/non-M-Pay) → pencairan → inquiry jadwal → cek tagihan → pembayaran angsuran ke-1, menautkan §4.11.1/§4.14/§4.11.2/§4.11.3/§4.15 sebagai satu naskah uji manual SIT/UAT yang juga menghasilkan data pre-condition yang identik dengan TC-301..TC-314. Tidak menambah unit test baru — murni menyusun urutan skenario bisnis dari test unit yang sudah ada. |
 
 ---
 

@@ -7,7 +7,7 @@
 | Produk          | BIRU App   |
 | Slug            | `biru-app` |
 | Kelengkapan Dok | 5/11 (45%) |
-| Terakhir update | 30 Juli 2026    |
+| Terakhir update | 7 September 2026    |
 
 ---
 

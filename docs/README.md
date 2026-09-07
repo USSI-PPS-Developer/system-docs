@@ -24,4 +24,4 @@
 analyst new product "Nama Produk"
 ```
 
-*Terakhir diperbarui: 31 Juli 2026*
+*Terakhir diperbarui: 7 September 2026*

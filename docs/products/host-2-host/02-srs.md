@@ -127,12 +127,12 @@ Karakteristik arsitektural penting:
 | FR-010a | Upload foto & tanda tangan nasabah | Menyimpan foto dan/atau tanda tangan nasabah existing (`POST /nasabah/upload-media`); payload base64 → kolom LONGBLOB, minimal satu media, field kosong tidak menimpa data lama, office-scoped. | Sedang | BR-012 |
 | FR-011 | Registrasi & inquiry tabungan | Registrasi rekening, pencarian, inquiry saldo, daftar mutasi. Saldo minimum rekening baru diambil dari campaign yang berlaku (bila ada), jika tidak dari default produk. | Wajib | BR-012, BR-019 |
 | FR-011a | Update saldo minimum tabungan (campaign) | Mengubah saldo minimum rekening **existing** (`POST /tabungan/update-saldo-minimum`): `aksi=CAMPAIGN` (nilai dari master campaign, mis. 0) atau `aksi=DEFAULT_PRODUK` (kembali ke default produk). Payload **tanpa field nominal**; wajib `alasan`; setiap perubahan merekam nilai asal & baru ke `api_tab_minimum_change`; hanya user pada allowlist `tabung.minimum-editor-user-ids`; office-scoped. | Wajib | BR-019..BR-022 |
-| FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan, saldo, daftar. | Wajib | BR-012 |
+| FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan (seluruh angsuran belum lunas hingga tanggal inquiry), saldo, daftar. | Wajib | BR-012 |
 | FR-012a | Registrasi kredit via *loan style* (M-Pay) | Registrasi kredit (`POST /pinjaman/registrasi`) menerima `loanStyleId` **opsional** merujuk catalog `api_loan_style` (kombinasi nominal/tenor M-Pay yang disetujui bank). Bila diisi, `typeKredit`/`jmlPinjaman`/`jmlAngsuran`/`satuanWaktuAngsuran` diturunkan sistem dari catalog (nilai kiriman client untuk field tersebut diabaikan); bila kosong, alur registrasi lama tidak berubah. `GET /pinjaman/loan-style` (opsional filter `kodeProduk`) memuat daftar catalog aktif untuk dropdown, dipakai client **sebelum** registrasi. | Wajib | BR-012 |
 | FR-013 | Registrasi & inquiry deposito | Registrasi deposito (termasuk produk *special rate*: `sukuBunga` wajib & `jkw` 1/3/6/12), inquiry saldo, dan daftar produk *special rate* (`GET /deposito/produk-spesial-rate`). | Wajib | BR-012 |
 | FR-014 | Transaksi tabungan | Posting setoran/penarikan/transfer (tipe D1–D3, T1–T4). | Wajib | BR-006..BR-010 |
 | FR-015 | Pencairan pinjaman | Posting pencairan pinjaman (C1–C3) ke tabungan/tunai. | Wajib | BR-006..BR-010 |
-| FR-016 | Angsuran pinjaman | Posting angsuran (pokok + bunga). | Wajib | BR-006..BR-010 |
+| FR-016 | Angsuran pinjaman | Posting angsuran — hanya angsuran belum lunas paling awal, penuh (tanpa partial payment); `pokok`/`bunga` diturunkan sistem dari jadwal, bukan dari client. | Wajib | BR-006..BR-010, BR-023, BR-024 |
 | FR-017 | Setoran deposito | Posting setoran deposito (E1–E3). | Wajib | BR-006..BR-010 |
 | FR-018 | Cek status transaksi | Mengambil status transaksi berdasarkan `kuitansi`. | Tinggi | BR-012 |
 | FR-019 | Reversal transaksi | Membatalkan transaksi dengan guard anti dobel-reversal. | Wajib | BR-011 |
@@ -236,6 +236,46 @@ Karakteristik arsitektural penting:
   kolom data** — belum ada logic yang menghitung atau memposting denda pada alur
   angsuran/pembayaran. Penerapan denda menyusul di perubahan terpisah.
 
+### Detail FR-016 (Angsuran Pinjaman & Tagihan Kredit — sekuensial, M-Pay)
+- **Latar belakang:** Keputusan BPR/M-Pay (2026-09-01) — alur pembayaran angsuran mobile tidak
+  lagi mendukung pembayaran sebagian ("mirip fintech"): nasabah membayar satu angsuran penuh
+  atau tidak sama sekali, dan hanya angsuran belum lunas **paling awal** yang boleh dibayar
+  (tidak boleh melompati angsuran yang masih tertunggak) — lihat BR-023, BR-024.
+- **`POST /api/v1/pinjaman/tagihan`** — request **tidak berubah** (`noRekening`, `tglTrans`,
+  `userId`). Sekarang mengembalikan **seluruh** angsuran belum lunas yang jatuh tempo pada atau
+  sebelum `tglTrans` (terurut `angsuranKe` menaik), bukan hanya satu baris pada tanggal persis
+  yang diminta — rekening yang telat lebih dari satu periode menampilkan seluruh periode yang
+  tertunggak sekaligus. Output berbentuk `{ tagihan: [...], totalPokok, totalBunga, totalDenda,
+  totalTagihan }`; tiap baris `tagihan[]` bertambah `denda` (placeholder `0`) dan `totalTagihan`
+  (`pokok+bunga+denda`); field lama `tunggakanPokok`/`tunggakanBunga` (akumulasi tunggakan
+  level akun) **dihapus** — redundan, digantikan ringkasan level-list di atas.
+- **`POST /api/v1/transaksi/angsuranPinjaman`** — **Pemicu:** Bearer access token +
+  `X-IDEMPOTENCY-KEY`. **Input** (`TransKreditAngsuranRequestDTO`): `tglTrans`, `angsuranKe`,
+  `kuitansi`, `kuitansiId`, `tipeTrans`, `kodeKantor`, `noRekening`, `keterangan`, `userId` —
+  field `pokok`/`bunga` **dihapus**, tidak lagi diterima dari client.
+- **Proses:** rantai guard standar (token → `userId` == klaim token → idempotency → rate limit
+  → `TenantGuard.assertOffice`) → guard bisnis lama tanpa perubahan urutan (kode kantor sesuai
+  rekening, tipe transaksi tersedia, kuitansi id tidak duplikat, pinjaman belum lunas/tidak
+  ditutup) → **di dalam** lock pessimistic-write kredit: cari angsuran belum lunas paling awal
+  dari jadwal (`kretrans` `my_kode_trans=200` tanpa baris pasangan `my_kode_trans=300`) →
+  bandingkan dengan `angsuranKe` yang diminta:
+  - tidak ada angsuran belum lunas tersisa → tolak, "Pinjaman sudah lunas, tidak ada tagihan
+    yang harus dibayar";
+  - `angsuranKe` diminta **lebih awal** dari yang belum lunas paling awal → tolak, "Angsuran
+    ke-{N} sudah dibayar";
+  - `angsuranKe` diminta **lebih akhir** (melompat) → tolak, "Angsuran ke-{N} harus dibayar
+    terlebih dahulu" (`{N}` = angsuran yang wajib dibayar lebih dulu);
+  - cocok → `pokok`/`bunga` angsuran tersebut (dari jadwal) yang diposting, **bukan** dari
+    payload → lanjut ke pengecekan saldo cukup terhadap nominal yang diturunkan ini.
+- **Output:** `TransKreditAngsuranResponseDTO` bertambah `pokok`, `bunga`, `denda` (placeholder
+  `0`), `totalAngsuran` — sehingga client tahu nominal yang benar-benar diposting walau tidak
+  mengirimkannya sendiri.
+- **Aturan validasi:** lihat BR-023/BR-024; seluruh guard lama (kode kantor, tipe transaksi,
+  kuitansi duplikat, pinjaman ditutup, saldo cukup) tetap berlaku, tanpa perubahan urutan
+  relatif terhadap pemeriksaan sekuensial baru di atas.
+- **Catatan cakupan:** `denda` (0,3%/hari) tetap **placeholder** pada kedua endpoint — belum ada
+  perhitungan/posting denda pada perubahan ini (sama seperti dicatat pada FR-012a).
+
 ### Detail FR-019 (Reversal)
 - **Pemicu:** `POST /api/v1/transaksi/reversal` (Bearer + `X-IDEMPOTENCY-KEY`).
 - **Input:** `TransReverseRequestDTO` — `kuitansi`, `tipeTrans`, `userId`.
@@ -307,6 +347,7 @@ Alternative/Exception Flow:
 | 1.3.1 | 25 Agustus 2026 | | FR-012a diperluas: tambah discovery endpoint `GET /pinjaman/loan-style` (opsional filter `kodeProduk`) supaya M-Pay bisa memuat pilihan catalog aktif (termasuk persentase provisi/adm/denda) sebelum mengirim `loanStyleId` ke `/registrasi`. Read-only, tanpa idempotency/tenant guard. |
 | 1.3.2 | 25 Agustus 2026 | | FR-012a diperluas lagi: `kodeProduk` sekarang juga diturunkan dari `api_loan_style` bila `loanStyleId` diisi (bukan cuma `typeKredit`/`jmlPinjaman`/`jmlAngsuran`/`satuanWaktuAngsuran`) — M-Pay tidak perlu/tidak boleh mengirim `kodeProduk`. Aturan validasi "kode_produk cocok dengan request" dihapus (tidak relevan lagi). |
 | 1.3.3 | 25 Agustus 2026 | | FR-012a diperluas lagi: `sukuBungaPerTahun` sekarang juga diturunkan dari `api_loan_style` (kolom baru `suku_bunga_per_tahun`, patch `patch_api_loan_style_suku_bunga.sql`) bila `loanStyleId` diisi — M-Pay tidak perlu/tidak boleh mengirim suku bunga. Aturan validasi baru: catalog dengan `suku_bunga_per_tahun <= 0` ditolak ("Suku bunga loan style belum diisi"), mencegah baris yang belum di-backfill dipakai untuk registrasi bunga 0%. `GET /loan-style` menambahkan `sukuBungaPerTahun` pada response. |
+| 1.4.0 | 1 September 2026 | | FR-012 diperluas (`/tagihan` mengembalikan seluruh angsuran belum lunas, bukan satu baris) & FR-016 diperluas + **Detail FR-016 baru**: pembayaran angsuran pinjaman sekuensial tanpa partial payment (keputusan BPR/M-Pay) — hanya angsuran belum lunas paling awal yang dapat dibayar, `pokok`/`bunga` tidak lagi diterima dari client (diturunkan dari jadwal). BR-023/BR-024 baru pada BRD terkait. |
 
 ---
 
