@@ -38,7 +38,7 @@ Catatan penting:
   - **Milik H2H** (dibuat oleh produk ini, DDL ada di repo): `api_auth_config`,
     `api_refresh_tokens`, `api_login_log`, `api_log`, `api_transaction_log`,
     `api_integration`, `api_binding_bank`, `api_tab_campaign`, `api_tab_minimum_change`,
-    `api_loan_style`.
+    `api_loan_style`, `api_dep_oncall_rate`.
   - **Milik / berbagi dengan Core Banking IBS (legacy)**: `nasabah`, `tabung`, `tabtrans`,
     `kredit`, `kretrans`, `deposito`, `deptrans`, tabel produk & referensi, serta
     `sys_daftar_user`, `sys_mysysid`. Struktur dikelola IBS — **jangan ubah format kolom**
@@ -61,31 +61,32 @@ Catatan penting:
 | 8 | `api_tab_campaign` | Master campaign saldo minimum tabungan (mis. bebas saldo minimum = 0). |
 | 9 | `api_tab_minimum_change` | Jejak audit perubahan `tabung.minimum` (nilai asal → nilai baru). |
 | 10 | `api_loan_style` | Master catalog *loan style* kredit M-Pay (nominal/tenor/suku bunga & persentase provisi/adm/denda yang disetujui bank). |
+| 11 | `api_dep_oncall_rate` | Master suku bunga per-tenor deposito **On Call** (per `kodeProduk`+`jkw`), bentuk meniru `api_tab_campaign`. |
 
 ### 1.2 Berbagi dengan Core Banking IBS — DB Primary (`dbcore`)
 | No | Nama Tabel | Deskripsi |
 |----|-----------|-----------|
-| 11 | `nasabah` | Data nasabah (CIF). |
-| 12 | `tabung` | Rekening tabungan. |
-| 13 | `tabtrans` | Transaksi tabungan (mutasi). |
-| 14 | `kredit` | Rekening pinjaman/kredit. |
-| 15 | `kretrans` | Transaksi kredit (pencairan/angsuran). |
-| 16 | `deposito` | Rekening deposito. |
-| 17 | `deptrans` | Transaksi deposito. |
-| 18 | `transaksi_master` | Header jurnal GL (ditulis saat posting transaksi). |
-| 19 | `transaksi_detail` | Baris jurnal GL (debet/kredit per akun; `master_id`→`transaksi_master`). |
-| 20 | `tab_produk` / `kre_produk` / `dep_produk` | Master produk tabungan / kredit / deposito. |
-| 21 | `tab_integrasi` / `kre_integrasi` / `dep_integrasi` | Pemetaan kode integrasi per modul ke kode perkiraan GL. |
-| 22 | `perkiraan` | Bagan akun (Chart of Accounts / kode perkiraan GL). |
-| 23 | `css_jenis_debitur`, `css_kode_agama`, `css_sumber_penghasilan`, `css_pemasukan_per_bulan` | Tabel referensi/lookup untuk validasi registrasi nasabah. |
-| 24 | `app_kode_kantor` / `app_kode_kantor_atk` | Master kantor/unit kerja (`kode_kantor` → `nama_kantor`); varian ATK memuat pemetaan akun RAK antar-kantor. |
-| 25 | `aba`, `aba_integrasi`, `abatrans` | Rekening & transaksi ABA (antar-bank). |
+| 12 | `nasabah` | Data nasabah (CIF). |
+| 13 | `tabung` | Rekening tabungan. |
+| 14 | `tabtrans` | Transaksi tabungan (mutasi). |
+| 15 | `kredit` | Rekening pinjaman/kredit. |
+| 16 | `kretrans` | Transaksi kredit (pencairan/angsuran). |
+| 17 | `deposito` | Rekening deposito. |
+| 18 | `deptrans` | Transaksi deposito. |
+| 19 | `transaksi_master` | Header jurnal GL (ditulis saat posting transaksi). |
+| 20 | `transaksi_detail` | Baris jurnal GL (debet/kredit per akun; `master_id`→`transaksi_master`). |
+| 21 | `tab_produk` / `kre_produk` / `dep_produk` | Master produk tabungan / kredit / deposito. |
+| 22 | `tab_integrasi` / `kre_integrasi` / `dep_integrasi` | Pemetaan kode integrasi per modul ke kode perkiraan GL. |
+| 23 | `perkiraan` | Bagan akun (Chart of Accounts / kode perkiraan GL). |
+| 24 | `css_jenis_debitur`, `css_kode_agama`, `css_sumber_penghasilan`, `css_pemasukan_per_bulan` | Tabel referensi/lookup untuk validasi registrasi nasabah. |
+| 25 | `app_kode_kantor` / `app_kode_kantor_atk` | Master kantor/unit kerja (`kode_kantor` → `nama_kantor`); varian ATK memuat pemetaan akun RAK antar-kantor. |
+| 26 | `aba`, `aba_integrasi`, `abatrans` | Rekening & transaksi ABA (antar-bank). |
 
 ### 1.3 DB Sys (`dbcore_sys`)
 | No | Nama Tabel | Deskripsi |
 |----|-----------|-----------|
-| 26 | `sys_daftar_user` | Data pengguna (kredensial SHA1, `unit_kerja` → `kode_kantor`). |
-| 27 | `sys_mysysid` | Parameter sistem key-value (mis. setting registrasi/limit modul MCS). |
+| 27 | `sys_daftar_user` | Data pengguna (kredensial SHA1, `unit_kerja` → `kode_kantor`). |
+| 28 | `sys_mysysid` | Parameter sistem key-value (mis. setting registrasi/limit modul MCS). |
 
 ---
 
@@ -267,6 +268,37 @@ Catatan penting:
 
 **Index:** `idx_loan_style_lookup` (`kode_produk`, `is_active`).
 
+#### Tabel: `api_dep_oncall_rate` (entity `ApiDepOncallRate`)
+> Master suku bunga per-tenor deposito **On Call** (`dep_produk.kode_jenis='2'`, saat ini hanya
+> `kodeProduk=311`). Bentuknya meniru `api_tab_campaign` di atas persis (governance columns
+> `kode_campaign`/`no_memo`/`dibuat_oleh`/`disetujui_oleh`/`created_at` sama), hanya kolom
+> pembedanya **`jkw`** (hari) — bukan `kode_kantor` — karena di sini suku bunga bervariasi per
+> tenor, bukan per kantor. Diperlukan karena satu baris `dep_produk` hanya dapat menyimpan **satu**
+> `suku_bunga_default`, sementara memo BPR "Program Deposito On Call" menetapkan **dua** suku
+> bunga berbeda untuk produk `311` yang sama (7 hari = 2,5% p.a, 14 hari = 3% p.a). Resolusi
+> `(kode_produk, jkw, tanggal registrasi)` terhadap tabel ini **adalah** validasi tenor `jkw` yang
+> diperbolehkan — tidak ada `jkw ∈ {7,14}` hardcoded di kode. **Tidak ada fallback** ke
+> `dep_produk.suku_bunga_default` bila tidak ada baris aktif yang cocok — berbeda dari
+> `api_tab_campaign` yang jatuh ke default produk saat tidak ada campaign — karena
+> `suku_bunga_default` bukan suku bunga program ini.
+
+| No | Kolom | Tipe Data | Null | Default | Keterangan |
+|----|-------|-----------|------|---------|------------|
+| 1 | `kode_campaign` | `VARCHAR(20)` | NOT NULL | | **PK**. Mis. `DOC-7HR-2026-09`. |
+| 2 | `nama_campaign` | `VARCHAR(100)` | NOT NULL | | Nama program/campaign. |
+| 3 | `kode_produk` | `VARCHAR(3)` | NOT NULL | | Produk deposito yang dicakup (`dep_produk`, saat ini `311`). |
+| 4 | `jkw` | `INT` | NOT NULL | | Tenor dalam **hari** (mis. `7` atau `14`) — kolom pembeda, ganti peran `kode_kantor` di `api_tab_campaign`. |
+| 5 | `suku_bunga` | `DECIMAL(7,4)` | NOT NULL | | Suku bunga (% p.a) untuk kombinasi `(kode_produk, jkw)` ini. |
+| 6 | `tgl_mulai` | `DATE` | NOT NULL | | Awal periode berlaku. |
+| 7 | `tgl_akhir` | `DATE` | NOT NULL | | Akhir periode berlaku — lewat periode ini, `jkw` tersebut ditolak (tanpa fallback). |
+| 8 | `is_active` | `TINYINT(1)` | NOT NULL | `1` | Nonaktif = tidak dipakai walau periodenya masih berlaku. |
+| 9 | `no_memo` | `VARCHAR(50)` | NULL | | Referensi memo persetujuan BPR ("Program Deposito On Call"). |
+| 10 | `dibuat_oleh` | `VARCHAR(20)` | NOT NULL | | Pembuat baris — `user_id` **atau** nama/inisial unit (teks bebas). |
+| 11 | `disetujui_oleh` | `VARCHAR(20)` | NULL | | Pejabat yang menyetujui. |
+| 12 | `created_at` | `DATETIME` | NOT NULL | `CURRENT_TIMESTAMP` | Waktu buat. |
+
+**Index:** `idx_oncall_rate_lookup` (`kode_produk`, `jkw`, `is_active`, `tgl_mulai`, `tgl_akhir`).
+
 ### 2.2 Tabel Core Banking IBS (kolom kunci — struktur dikelola IBS)
 
 > Tabel-tabel berikut **milik/berbagi dengan Core Banking IBS**; H2H hanya membaca/menulis
@@ -359,7 +391,15 @@ Transaksi deposito: `tgl_trans`, `no_rekening` (→`deposito`), `kode_trans`, `m
   (PK `kode_produk` V3) — master produk (suku bunga & PPh default, dll). `dep_produk`
   memiliki `is_custom_rate` `TINYINT(1)` `NOT NULL DEFAULT 0` — bila `1`, produk deposito
   memakai *special/custom rate* (registrasi mewajibkan `sukuBunga` dari payload & membatasi
-  `jkw` ke 1/3/6/12). Ditambahkan via `patch_dep_produk_is_custom_rate.sql`.
+  `jkw` ke 1/3/6/12). Ditambahkan via `patch_dep_produk_is_custom_rate.sql`. `dep_produk` juga
+  memiliki `kode_jenis` `CHAR(1)` (nullable, referensi tabel `dep_kode_jenis`: `1`=Bulanan,
+  `2`=OnCall, `3`=BDD — **tanpa FK**, konsisten dengan `kredit.loan_style_id`) yang
+  mengklasifikasi tenor produk; `kode_jenis='2'` (OnCall, saat ini hanya `kodeProduk=311`)
+  membuat registrasi memvalidasi tenor dalam **hari** (bukan bulan). Ditambahkan via
+  `patch_dep_produk_kode_jenis.sql`, sekaligus membackfill baris existing
+  (`301/303/306/312→'1'`, `311→'2'`; `399` dibiarkan `NULL`, belum terklasifikasi).
+  ⚠️ `kode_jenis` **tidak** menentukan `jkw` mana yang diterima maupun suku bunganya — itu
+  ditentukan oleh master `api_dep_oncall_rate` (lihat di bawah), bukan `suku_bunga_default`.
 - `perkiraan` (PK `kode_perk` V20) — Chart of Accounts (GL); `nama_perk`, `flag_blokir`.
 - `css_jenis_debitur` (PK `kode_jenis_debitur` V1), `css_kode_agama` (PK `kode_agama`),
   `css_sumber_penghasilan`, `css_pemasukan_per_bulan` — lookup validasi registrasi nasabah.
@@ -459,6 +499,26 @@ Transaksi deposito: `tgl_trans`, `no_rekening` (→`deposito`), `kode_trans`, `m
     jadi aplikasi menolak (`BusinessException` "Suku bunga loan style belum diisi") registrasi
     lewat `loanStyleId` manapun yang masih `suku_bunga_per_tahun <= 0` — mencegah kredit
     ter-registrasi dengan bunga 0% karena baris catalog belum sempat di-`UPDATE`.
+13. **Klasifikasi tenor produk deposito (`dep_produk.kode_jenis`) & bug jatuh tempo On Call** —
+    `kode_jenis` menentukan satuan tenor `jkw` (bulan vs hari); registrasi produk On Call
+    (`kode_jenis='2'`) menghitung `tgl_jt = tgl_registrasi + jkw hari` (bukan bulan seperti
+    produk lain). Perhitungan `tgl_jt` sebelumnya selalu `+bulan` untuk semua produk — bug ini
+    ditemukan & diperbaiki bersamaan dengan penambahan klasifikasi ini, sebelum produk On Call
+    pernah dipakai di produksi (tidak ada dampak nyata). Aturan ini **saling eksklusif** dengan
+    aturan *special rate* (`is_custom_rate`) — produk yang kelak sekaligus keduanya akan
+    mengikuti aturan *special rate*, bukan On Call. ⚠️ **Koreksi:** `kode_jenis` sendiri **tidak**
+    membatasi `jkw` ke `{7,14}` — pembatasan itu ditentukan oleh aturan #14 di bawah, lewat
+    master `api_dep_oncall_rate`, bukan set hardcoded di kode.
+14. **Suku bunga & tenor On Call ditentukan oleh master campaign `api_dep_oncall_rate`, tanpa
+    fallback** — satu baris `dep_produk` hanya dapat menyimpan satu `suku_bunga_default`, padahal
+    memo BPR "Program Deposito On Call" menetapkan suku bunga berbeda per tenor (7 hari = 2,5%
+    p.a, 14 hari = 3% p.a, periode 1–30 September 2026). Suku bunga & tenor yang berlaku
+    diresolusi dari `api_dep_oncall_rate` berdasarkan `(kode_produk, jkw, tanggal registrasi)` —
+    resolusi ini **adalah** validasi `jkw`: hanya `jkw` yang punya baris aktif yang cocok yang
+    diterima; selain itu ditolak ("Program deposito on call untuk jangka waktu {N} hari tidak
+    tersedia pada tanggal ini"). **Berbeda dari `api_tab_campaign`** (aturan #8), tidak ada
+    fallback ke `dep_produk.suku_bunga_default` saat tidak ada baris cocok — nilai default itu
+    bukan suku bunga program ini, sehingga fallback berisiko mengenakan bunga yang salah.
 
 ## 5. DDL (tabel milik H2H)
 
@@ -602,6 +662,44 @@ ALTER TABLE `api_loan_style`
     ADD COLUMN `suku_bunga_per_tahun` DECIMAL(7,4) NOT NULL DEFAULT 0;
 -- UPDATE `api_loan_style` SET `suku_bunga_per_tahun` = 24.0000 WHERE `id` IN (1,2,3,4,5,6); -- contoh
 
+-- Klasifikasi tenor produk deposito (patch_dep_produk_kode_jenis.sql) — referensi tabel
+-- dep_kode_jenis (1=Bulanan, 2=OnCall, 3=BDD), tanpa FK (sama konvensi dengan loan_style_id).
+-- Backfill: 301/303/306/312 -> '1', 311 -> '2'; 399 dibiarkan NULL (belum terklasifikasi).
+ALTER TABLE `dep_produk`
+    ADD COLUMN `kode_jenis` CHAR(1) DEFAULT NULL;
+
+-- Master suku bunga per-tenor deposito On Call (patch_dep_oncall_rate.sql) — bentuk meniru
+-- api_tab_campaign persis, hanya kolom pembeda `jkw` (hari) menggantikan `kode_kantor`, karena
+-- satu baris dep_produk tidak dapat menyimpan dua suku_bunga_default berbeda untuk tenor 7 vs 14
+-- hari. Tidak ada fallback ke dep_produk.suku_bunga_default bila tidak ada baris aktif yang cocok.
+CREATE TABLE `api_dep_oncall_rate` (
+    `kode_campaign`  VARCHAR(20)   NOT NULL,
+    `nama_campaign`  VARCHAR(100)  NOT NULL,
+    `kode_produk`    VARCHAR(3)    NOT NULL,
+    `jkw`            INT           NOT NULL,              -- tenor dalam hari, mis. 7 atau 14
+    `suku_bunga`     DECIMAL(7,4)  NOT NULL,               -- % p.a untuk (kode_produk, jkw) ini
+    `tgl_mulai`      DATE          NOT NULL,
+    `tgl_akhir`      DATE          NOT NULL,
+    `is_active`      TINYINT(1)    NOT NULL DEFAULT 1,
+    `no_memo`        VARCHAR(50)            DEFAULT NULL,  -- referensi memo persetujuan BPR
+    `dibuat_oleh`    VARCHAR(20)   NOT NULL,
+    `disetujui_oleh` VARCHAR(20)            DEFAULT NULL,
+    `created_at`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`kode_campaign`),
+    KEY `idx_oncall_rate_lookup` (`kode_produk`, `jkw`, `is_active`, `tgl_mulai`, `tgl_akhir`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- Seed dua baris memo "Program Deposito On Call" (seed_dep_oncall_rate.sql), idempotent.
+-- no_memo di file seeder masih PLACEHOLDER — lihat catatan seed di bawah.
+-- INSERT INTO `api_dep_oncall_rate`
+--   (`kode_campaign`, `nama_campaign`, `kode_produk`, `jkw`, `suku_bunga`, `tgl_mulai`, `tgl_akhir`,
+--    `is_active`, `no_memo`, `dibuat_oleh`, `disetujui_oleh`)
+-- VALUES
+--   ('DOC-7HR-2026-09', 'Deposito On Call 7 Hari', '311', 7,  2.50, '2026-09-01', '2026-09-30', 1, 'MEMO/BPR/ONCALL/2026/001-PLACEHOLDER', 'USSI', 'B Eko Prasetyo'),
+--   ('DOC-14HR-2026-09','Deposito On Call 14 Hari','311', 14, 3.00, '2026-09-01', '2026-09-30', 1, 'MEMO/BPR/ONCALL/2026/001-PLACEHOLDER', 'USSI', 'B Eko Prasetyo')
+-- ON DUPLICATE KEY UPDATE
+--   `suku_bunga` = VALUES(`suku_bunga`), `tgl_mulai` = VALUES(`tgl_mulai`), `tgl_akhir` = VALUES(`tgl_akhir`);
+
 -- Referensi kode binding bank (ABA)
 CREATE TABLE `api_binding_bank` (
     `id`           BIGINT NOT NULL AUTO_INCREMENT,
@@ -656,6 +754,27 @@ Catatan:
   campaign karena `api_tab_minimum_change.kode_campaign` merujuknya (jejak audit harus tetap dapat
   ditelusuri).
 
+**Seed `api_dep_oncall_rate` (suku bunga Deposito On Call — `seed_dep_oncall_rate.sql`):** dua
+baris sesuai memo BPR "Program Deposito On Call", produk `311`, periode 2026-09-01 … 2026-09-30,
+`is_active = 1`:
+
+| `kode_campaign` | `jkw` | `suku_bunga` | Periode |
+|-----------------|-------|--------------|---------|
+| `DOC-7HR-2026-09` | 7 hari | `2.50` % p.a | 2026-09-01 … 2026-09-30 |
+| `DOC-14HR-2026-09` | 14 hari | `3.00` % p.a | 2026-09-01 … 2026-09-30 |
+
+Catatan:
+- `no_memo` pada file seeder masih **placeholder** — sama seperti `seed_api_tab_campaign.sql`,
+  ganti dengan nomor memo BPR yang sudah dikonfirmasi sebelum dijalankan di produksi (nomor memo
+  pada dokumen sumber sebagian tidak terbaca saat fitur ini diimplementasikan).
+- Seeder **idempotent** (`INSERT … ON DUPLICATE KEY UPDATE`), konvensi `seed_` yang sama.
+- **Tidak ada fallback**: `jkw` di luar {7,14}, atau `jkw=7`/`14` di luar periode 1–30 September
+  2026, ditolak oleh aplikasi — **tidak** jatuh ke `dep_produk.suku_bunga_default` (lihat aturan
+  data #14).
+- Menghentikan program lebih awal via `is_active = 0`; **jangan `DELETE`** baris ini karena pola
+  audit yang sama dengan `api_tab_campaign` berlaku (jejak harus tetap dapat ditelusuri bila kelak
+  ada tabel audit turunan).
+
 **Catalog `api_loan_style` (*loan style* M-Pay) — belum ada baris seed dengan nilai final.**
 Berbeda dengan `api_tab_campaign`, tabel ini **belum diisi data final** saat patch dijalankan:
 BPR belum mengonfirmasi angka final `perc_provisi`/`perc_adm`/`perc_denda`/`type_kredit`/
@@ -684,6 +803,8 @@ contoh `INSERT` yang di-*comment* sebagai referensi struktur. Seeder resmi
 | 1.2.1 | 6 Agustus 2026 | | Tambah bagian **Seed `api_tab_campaign`** (`seed_api_tab_campaign.sql`): 4 campaign bebas saldo minimum produk 201–204, `saldo_minimum` 0, semua kantor, 2026-08-01 s/d 2026-09-30, `dibuat_oleh` USSI / `disetujui_oleh` B Eko Prasetyo, seeder idempotent, penghentian campaign via `is_active = 0` (bukan `DELETE`). Keterangan kolom `dibuat_oleh`/`disetujui_oleh` diperjelas: boleh `user_id` maupun nama. Tanpa perubahan skema. |
 | 1.3.0 | 25 Agustus 2026 | | CR BPR — pinjaman M-Pay: tambah tabel milik H2H `api_loan_style` (master catalog *loan style*: nominal/tenor & persentase provisi/adm/denda) + DDL-nya; patch `patch_kredit_loan_style.sql` menambah **1 kolom nullable baru** pada `kredit` (`loan_style_id`). `kredit.provisi`/`adm_lainnya`/`perc_denda` **sudah ada sebelumnya** di tabel legacy ini (`DECIMAL(18,2)`/`DECIMAL(18,2)`/`DECIMAL(6,3)`, cocok persis) — fitur ini hanya memetakan & mengisinya sebagai snapshot saat registrasi via `loanStyleId`, **tidak** menambahnya lewat patch. Daftar Tabel §1 dirapikan ulang nomornya (10→27). Aturan data #10/#11 ditambah. **Belum ada seed** `api_loan_style` — menunggu konfirmasi angka BPR; **denda keterlambatan (`perc_denda`) belum diterapkan**, hanya kolom data. |
 | 1.3.1 | 25 Agustus 2026 | | Tambah kolom `api_loan_style.suku_bunga_per_tahun` (`DECIMAL(7,4)`, patch **baru** `patch_api_loan_style_suku_bunga.sql`, `ALTER ... DEFAULT 0` karena tabel sudah punya baris live dari patch sebelumnya) — `kredit.suku_bunga_per_tahun` (kolom lama, bukan baru) sekarang juga diturunkan dari catalog pada jalur `loanStyleId`. Aturan data #12 baru: baris catalog dengan suku bunga `<= 0` (mis. belum di-backfill setelah `ALTER`) ditolak aplikasi. |
+| 1.4.0 | 11 September 2026 | | Tambah kolom `dep_produk.kode_jenis` (`CHAR(1)`, nullable, referensi tabel `dep_kode_jenis`: 1=Bulanan/2=OnCall/3=BDD, tanpa FK) via patch **baru** `patch_dep_produk_kode_jenis.sql` — juga membackfill `301/303/306/312→'1'`, `311→'2'` (`399` dibiarkan `NULL`). Aturan data #13 baru: produk On Call (`kode_jenis='2'`) membatasi `jkw` ke 7/14 hari, dan mencatat perbaikan bug lama yang menghitung tanggal jatuh tempo dalam bulan untuk semua produk (termasuk yang seharusnya harian). Tabel legacy `dep_produk` hanya bertambah 1 kolom nullable — tidak ada dampak ke baris/aplikasi lain. |
+| 1.5.0 | 11 September 2026 | | **Koreksi versi 1.4.0** — memo BPR "Program Deposito On Call" yang sebenarnya menetapkan suku bunga **berbeda per tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 September 2026), bukan `dep_produk.suku_bunga_default` seperti tercatat sebelumnya; satu baris `dep_produk` tidak dapat menyimpan dua suku bunga berbeda. Tambah tabel milik H2H **baru** `api_dep_oncall_rate` (bentuk meniru `api_tab_campaign`, keyed by `jkw` alih-alih `kode_kantor`) + DDL-nya; patch `patch_dep_oncall_rate.sql` (buat tabel) dan `seed_dep_oncall_rate.sql` (seed 2 baris memo, `no_memo` **placeholder** — pola sama dengan `seed_api_tab_campaign.sql`). Daftar Tabel §1 dirapikan ulang nomornya (10→28, tabel baru jadi #11). Aturan data #13 dikoreksi (`kode_jenis` tidak lagi menentukan `jkw` yang diterima) dan #14 baru (resolusi `api_dep_oncall_rate` = validasi tenor, **tanpa fallback** ke default produk — berbeda dari `api_tab_campaign`). |
 
 ---
 

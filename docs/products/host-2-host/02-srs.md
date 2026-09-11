@@ -129,7 +129,7 @@ Karakteristik arsitektural penting:
 | FR-011a | Update saldo minimum tabungan (campaign) | Mengubah saldo minimum rekening **existing** (`POST /tabungan/update-saldo-minimum`): `aksi=CAMPAIGN` (nilai dari master campaign, mis. 0) atau `aksi=DEFAULT_PRODUK` (kembali ke default produk). Payload **tanpa field nominal**; wajib `alasan`; setiap perubahan merekam nilai asal & baru ke `api_tab_minimum_change`; hanya user pada allowlist `tabung.minimum-editor-user-ids`; office-scoped. | Wajib | BR-019..BR-022 |
 | FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan (seluruh angsuran belum lunas hingga tanggal inquiry), saldo, daftar. | Wajib | BR-012 |
 | FR-012a | Registrasi kredit via *loan style* (M-Pay) | Registrasi kredit (`POST /pinjaman/registrasi`) menerima `loanStyleId` **opsional** merujuk catalog `api_loan_style` (kombinasi nominal/tenor M-Pay yang disetujui bank). Bila diisi, `typeKredit`/`jmlPinjaman`/`jmlAngsuran`/`satuanWaktuAngsuran` diturunkan sistem dari catalog (nilai kiriman client untuk field tersebut diabaikan); bila kosong, alur registrasi lama tidak berubah. `GET /pinjaman/loan-style` (opsional filter `kodeProduk`) memuat daftar catalog aktif untuk dropdown, dipakai client **sebelum** registrasi. | Wajib | BR-012 |
-| FR-013 | Registrasi & inquiry deposito | Registrasi deposito (termasuk produk *special rate*: `sukuBunga` wajib & `jkw` 1/3/6/12), inquiry saldo, dan daftar produk *special rate* (`GET /deposito/produk-spesial-rate`). | Wajib | BR-012 |
+| FR-013 | Registrasi & inquiry deposito | Registrasi deposito — validasi `jkw` bercabang tiga menurut klasifikasi produk (`dep_produk.kode_jenis`): produk bulanan (aturan per-produk lama), produk *special rate* (`sukuBunga` wajib & `jkw` 1/3/6/12), produk **On Call** (`jkw` 7 atau 14 hari, tenor harian) — inquiry saldo, dan daftar produk *special rate* (`GET /deposito/produk-spesial-rate`). | Wajib | BR-012, BR-025 |
 | FR-014 | Transaksi tabungan | Posting setoran/penarikan/transfer (tipe D1–D3, T1–T4). | Wajib | BR-006..BR-010 |
 | FR-015 | Pencairan pinjaman | Posting pencairan pinjaman (C1–C3) ke tabungan/tunai. | Wajib | BR-006..BR-010 |
 | FR-016 | Angsuran pinjaman | Posting angsuran — hanya angsuran belum lunas paling awal, penuh (tanpa partial payment); `pokok`/`bunga` diturunkan sistem dari jadwal, bukan dari client. | Wajib | BR-006..BR-010, BR-023, BR-024 |
@@ -235,6 +235,57 @@ Karakteristik arsitektural penting:
   (0,3%/hari) dan snapshot `kredit.perc_denda` pada perubahan ini **hanya disiapkan sebagai
   kolom data** — belum ada logic yang menghitung atau memposting denda pada alur
   angsuran/pembayaran. Penerapan denda menyusul di perubahan terpisah.
+
+### Detail FR-013 (Registrasi Deposito — klasifikasi produk & tenor harian On Call)
+- **Latar belakang:** BPR memperkenalkan produk deposito baru **On Call** (`kodeProduk=311`,
+  sudah ada di master produk sebelumnya) dengan tenor **harian** (7 atau 14 hari) — berbeda
+  dari empat produk bulanan yang sudah ada (`301/303/306/312`, tenor dalam bulan). Klasifikasi
+  produk kini disimpan pada `dep_produk.kode_jenis` (referensi tabel `dep_kode_jenis`:
+  `1`=Bulanan, `2`=OnCall, `3`=BDD), diturunkan sistem dari `kodeProduk` — **tidak pernah**
+  dikirim client (`CreateDepositoRequestDTO` tidak bertambah field), pola yang sama dengan
+  `is_custom_rate`.
+- **Pemicu:** `POST /api/v1/deposito/registrasi` — kontrak request/response **tidak berubah**;
+  hanya validasi `jkw` & perhitungan tanggal jatuh tempo yang bercabang menurut klasifikasi
+  produk.
+- **Proses — tiga kategori `jkw` (mutually exclusive, `if`/`else if`/`else`):**
+  1. **Produk *special rate*** (`is_custom_rate=1`): `jkw` ∈ {1,3,6,12} (set-membership) — tidak
+     berubah (lihat Detail sebelumnya / §4.12 `03-api-contract.md`).
+  2. **Produk On Call** (`kode_jenis='2'`, saat ini hanya `311`): **tidak ada** set-membership
+     `jkw ∈ {7,14}` hardcoded di Java. Suku bunga (dan secara implisit, `jkw` mana saja yang
+     diterima) diturunkan dari master baru **`api_dep_oncall_rate`** — tabel campaign per
+     `(kodeProduk, jkw)` yang bentuknya meniru `api_tab_campaign` (campaign saldo minimum
+     tabungan, lihat `04-database-design.md`), hanya saja kolom pembedanya `jkw` (hari), bukan
+     `kode_kantor`. `resolveOnCallSukuBunga(kodeProduk, jkw, tglRegistrasi)` mencari baris aktif
+     yang cocok — **resolusi inilah validasi tenornya**: `jkw` yang diterima adalah persis
+     `jkw` yang punya baris campaign aktif untuk tanggal registrasi tersebut (saat ini 7 hari
+     @2,5% p.a dan 14 hari @3% p.a, periode 1–30 September 2026 sesuai memo BPR). Tidak ada
+     baris cocok → **ditolak** `95`, pesan **"Program deposito on call untuk jangka waktu {N}
+     hari tidak tersedia pada tanggal ini"** (menggantikan pesan versi sebelumnya yang mengacu
+     ke aturan `{7,14}` hardcoded). **Berbeda dari campaign saldo minimum tabungan**: tidak ada
+     fallback ke `dep_produk.suku_bunga_default` bila tidak ada campaign yang cocok — nilai
+     default itu bukan suku bunga program ini, sehingga fallback berisiko mengenakan bunga yang
+     salah.
+  3. **Produk lainnya** (`kode_jenis='1'`/Bulanan, & `399` yang tidak terklasifikasi): validasi
+     per-produk lama (`JKW_RULES`, strict single-value match per produk) — tidak berubah, dan
+     **tidak pernah dipanggil** untuk produk On Call.
+- **Bug diperbaiki bersamaan (bukan regresi baru):** tanggal jatuh tempo (`tglJt`) sebelumnya
+  **selalu** dihitung `tglRegistrasi.plusMonths(jkw)`, termasuk untuk produk On Call yang
+  `jkw`-nya dalam hari — berpotensi menghasilkan jatuh tempo yang salah (mis. 7 hari tercatat
+  sebagai 7 bulan). Sekarang bercabang: `plusDays(jkw)` untuk On Call, `plusMonths(jkw)` untuk
+  produk lain (tidak berubah). Ditemukan sebelum produk On Call pernah dipakai di produksi —
+  tidak ada nasabah yang terdampak.
+- **Output:** response `/registrasi` **tidak berubah** (`{noRekening}`).
+- **Cakupan API (penting):** endpoint ini hanya membuat rekening deposito dengan `suku_bunga`
+  dan `tgl_jt` yang benar. Akrual bunga harian (penerapan rumus memo: Nominal × Suku Bunga (p.a)
+  × Tenor(hari) ÷ 365 − Pajak(20%)) dan proses ARO/rollover saat jatuh tempo adalah tanggung
+  jawab **backoffice CBS**, **tidak** diimplementasikan oleh layanan ini. Ketentuan memo #3
+  (tanpa cash back), #5 (segmen retail/korporasi), dan #6 (hanya dana baru/*fresh fund*) bersifat
+  prosedural/teller-side — tidak ada field pada endpoint ini yang dapat memvalidasinya, sehingga
+  tidak ada enforcement level API untuk ketiganya.
+- **Catatan keterbatasan:** karena ketiga cabang bersifat eksklusif, produk yang di masa depan
+  sekaligus *special rate* **dan** On Call akan salah masuk ke cabang *special rate* (`jkw`
+  1/3/6/12) alih-alih On Call (`jkw` yang aktif di `api_dep_oncall_rate`). Belum ada produk
+  seperti itu saat ini; dicatat sebagai pemicu perbaikan lanjutan bila kelak terjadi.
 
 ### Detail FR-016 (Angsuran Pinjaman & Tagihan Kredit — sekuensial, M-Pay)
 - **Latar belakang:** Keputusan BPR/M-Pay (2026-09-01) — alur pembayaran angsuran mobile tidak
@@ -348,6 +399,8 @@ Alternative/Exception Flow:
 | 1.3.2 | 25 Agustus 2026 | | FR-012a diperluas lagi: `kodeProduk` sekarang juga diturunkan dari `api_loan_style` bila `loanStyleId` diisi (bukan cuma `typeKredit`/`jmlPinjaman`/`jmlAngsuran`/`satuanWaktuAngsuran`) — M-Pay tidak perlu/tidak boleh mengirim `kodeProduk`. Aturan validasi "kode_produk cocok dengan request" dihapus (tidak relevan lagi). |
 | 1.3.3 | 25 Agustus 2026 | | FR-012a diperluas lagi: `sukuBungaPerTahun` sekarang juga diturunkan dari `api_loan_style` (kolom baru `suku_bunga_per_tahun`, patch `patch_api_loan_style_suku_bunga.sql`) bila `loanStyleId` diisi — M-Pay tidak perlu/tidak boleh mengirim suku bunga. Aturan validasi baru: catalog dengan `suku_bunga_per_tahun <= 0` ditolak ("Suku bunga loan style belum diisi"), mencegah baris yang belum di-backfill dipakai untuk registrasi bunga 0%. `GET /loan-style` menambahkan `sukuBungaPerTahun` pada response. |
 | 1.4.0 | 1 September 2026 | | FR-012 diperluas (`/tagihan` mengembalikan seluruh angsuran belum lunas, bukan satu baris) & FR-016 diperluas + **Detail FR-016 baru**: pembayaran angsuran pinjaman sekuensial tanpa partial payment (keputusan BPR/M-Pay) — hanya angsuran belum lunas paling awal yang dapat dibayar, `pokok`/`bunga` tidak lagi diterima dari client (diturunkan dari jadwal). BR-023/BR-024 baru pada BRD terkait. |
+| 1.5.0 | 11 September 2026 | | FR-013 diperluas & **Detail FR-013 baru**: registrasi deposito kini mengklasifikasi produk lewat `dep_produk.kode_jenis` (Bulanan/OnCall/BDD) dan menambah kategori validasi `jkw` ketiga — produk **On Call** (`kodeProduk=311`, `jkw` 7 atau 14 hari, satuan hari). Sekaligus mencatat perbaikan bug tanggal jatuh tempo (`tglJt`) yang sebelumnya selalu dihitung dalam bulan untuk semua produk. BR-025 baru pada BRD terkait. Kontrak `/registrasi` tidak berubah. |
+| 1.6.0 | 11 September 2026 | | **Koreksi Detail FR-013** — memo BPR yang sebenarnya menetapkan suku bunga **berbeda per tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 September 2026), bukan `dep_produk.suku_bunga_default` seperti dicatat pada versi 1.5.0. Dikoreksi: kategori "Produk On Call" tidak lagi memakai `jkw ∈ {7,14}` hardcoded — validasi tenor kini sepenuhnya ditentukan oleh baris aktif di master baru `api_dep_oncall_rate` (per `kodeProduk`+`jkw`+periode, bentuk meniru `api_tab_campaign`), **tanpa fallback** ke default produk; pesan penolakan dikoreksi menjadi "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini". Tambah catatan cakupan API: akrual bunga & ARO/rollover adalah tanggung jawab backoffice CBS; ketentuan memo #3/#5/#6 tidak di-enforce di level API. BR-025/BR-026/BR-027 pada BRD terkait. Kontrak `/registrasi` tetap tidak berubah. |
 
 ---
 

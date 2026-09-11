@@ -116,7 +116,7 @@ Seluruh endpoint bisnis mengembalikan envelope `ApiResponse<T>`:
 ### 3.5 Deposito — `/api/v1/deposito`
 | No | Method | Endpoint | Deskripsi |
 |----|--------|----------|-----------|
-| 23 | `POST` | `/registrasi` | Registrasi deposito baru (mendukung produk *special rate*). |
+| 23 | `POST` | `/registrasi` | Registrasi deposito baru (mendukung produk *special rate* & produk On Call bertenor harian). |
 | 24 | `POST` | `/saldo` | Inquiry saldo deposito. |
 | 25 | `GET`  | `/produk-spesial-rate` | Daftar produk deposito ber-*custom rate* (`is_custom_rate=1`). |
 
@@ -682,6 +682,61 @@ via `GET /produk-spesial-rate`). Perilaku registrasi bercabang berdasarkan flag 
 - `jkw` bukan 1/3/6/12 pada produk special rate → **`95`** (`BUSINESS_EXCEPTION`, HTTP 400).
 - Field selain suku bunga tetap memakai default produk (mis. `persen_pph`) pada kedua cabang.
 
+#### Aturan produk On Call (registrasi)
+
+Produk diklasifikasi lewat `dep_produk.kode_jenis` (referensi tabel `dep_kode_jenis`:
+`1`=Bulanan, `2`=OnCall, `3`=BDD) — **diturunkan sistem dari `kodeProduk`, tidak pernah dikirim
+client** (pola yang sama dengan `is_custom_rate`). Produk On Call saat ini hanya
+`kodeProduk=311` ("Deposito On Call"), dengan `is_custom_rate=0` (tanpa suku bunga kustom lewat
+mekanisme *special rate*) — **namun tetap punya suku bunga per-tenor sendiri**, sumbernya bukan
+`suku_bunga_default` maupun payload, lihat di bawah.
+
+⚠️ **Sumber suku bunga (dikoreksi):** rilis awal fitur ini sempat mengasumsikan On Call memakai
+`suku_bunga_default` produk untuk kedua tenor — itu **keliru**. Memo BPR "Program Deposito On
+Call" menetapkan suku bunga **berbeda per tenor**: 7 hari = 2,5% p.a, 14 hari = 3% p.a, berlaku
+1–30 September 2026. Karena satu baris `dep_produk` hanya dapat menyimpan satu
+`suku_bunga_default`, suku bunga per-tenor ini disimpan pada tabel master baru
+**`api_dep_oncall_rate`** (bentuk meniru `api_tab_campaign` — lihat `04-database-design.md` —
+tapi keyed by `jkw` alih-alih `kode_kantor`), dan diresolusi server-side berdasarkan
+`(kodeProduk, jkw, tanggal registrasi)`.
+
+**`jkw` yang diperbolehkan tidak lagi berupa set hardcoded `{7,14}` di kode.** Resolusi suku
+bunga di atas **adalah** validasi tenornya: `jkw` yang diterima persis `jkw` yang punya baris
+`api_dep_oncall_rate` aktif untuk tanggal registrasi tersebut. Tabel di bawah mencerminkan baris
+yang aktif saat ini (bisa berubah tanpa perubahan kode bila BPR menambah/mengubah campaign):
+
+| Kondisi | `jkw` aktif saat ini | Satuan | Suku bunga | Sumber |
+|---------|----------------------|--------|------------|--------|
+| **On Call** (`kode_jenis='2'`) | **7** | Hari | 2,5% p.a | `api_dep_oncall_rate` (`kodeProduk=311`, periode 1–30 Sep 2026) |
+| **On Call** (`kode_jenis='2'`) | **14** | Hari | 3% p.a | `api_dep_oncall_rate` (`kodeProduk=311`, periode 1–30 Sep 2026) |
+
+- `jkw` tidak punya baris `api_dep_oncall_rate` aktif untuk tanggal registrasi (mis. `jkw=10`
+  yang tidak pernah ditawarkan, atau `jkw=7`/`14` diminta setelah periode program berakhir) →
+  **`95`** (`BUSINESS_EXCEPTION`, HTTP 400), pesan: **"Program deposito on call untuk jangka
+  waktu {N} hari tidak tersedia pada tanggal ini"** (menggantikan pesan versi sebelumnya yang
+  mengacu ke aturan `{7,14}` hardcoded).
+- **Tidak ada fallback** ke `dep_produk.suku_bunga_default` bila tidak ada baris campaign yang
+  cocok — berbeda dari campaign saldo minimum tabungan (`api_tab_campaign`) yang jatuh ke default
+  produk saat tidak ada campaign aktif. `suku_bunga_default` bukan suku bunga program ini,
+  sehingga fallback berisiko mengenakan bunga yang salah; registrasi ditolak, bukan disubstitusi.
+- Tanggal jatuh tempo (`tglJt`) dihitung sebagai `tglRegistrasi + jkw` **hari** untuk produk On
+  Call — **berbeda** dari produk lain (termasuk *special rate*), yang tetap
+  `tglRegistrasi + jkw` **bulan**. ⚠️ Sebelum perubahan ini, seluruh produk (termasuk yang
+  seharusnya harian) memakai perhitungan bulan — bug ini diperbaiki bersamaan dengan
+  penambahan aturan ini; belum ada dampak produksi (produk On Call belum pernah dipakai).
+- Aturan On Call dan aturan *special rate* di atas **saling eksklusif** — bila kelak ada produk
+  yang sekaligus keduanya, aturan *special rate* yang berlaku (bukan On Call); tidak ada produk
+  seperti itu saat ini.
+- **Cakupan API:** endpoint ini hanya membuat rekening dengan `suku_bunga`/`tgl_jt` yang benar.
+  Akrual bunga harian (rumus memo: Nominal × Suku Bunga (p.a) × Tenor(hari) ÷ 365 − Pajak(20%))
+  dan ARO/rollover saat jatuh tempo adalah proses **backoffice CBS**, di luar cakupan endpoint
+  ini. Ketentuan memo #3 (tanpa cash back), #5 (segmen retail/korporasi), dan #6 (hanya dana
+  baru/*fresh fund*) **tidak di-enforce di level API** — tidak ada field pada endpoint ini yang
+  dapat memvalidasinya; ketiganya bersifat prosedural/teller-side.
+- **Tidak ada perubahan request/response** (`CreateDepositoRequestDTO` / `{noRekening}`) — hanya
+  validasi & perhitungan server-side untuk `kodeProduk=311` yang berubah. **Bukan breaking
+  change.**
+
 **`GET /produk-spesial-rate` — Response 200 OK**
 ```json
 {
@@ -983,6 +1038,8 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 | 1.3.3 | 25 Agustus 2026 | | §4.11 & §4.11.1 diperluas: `sukuBungaPerTahun` sekarang juga diturunkan dari `api_loan_style.suku_bunga_per_tahun` (kolom baru) bila `loanStyleId` diisi — M-Pay tidak perlu/tidak boleh mengirim suku bunga. `GET /loan-style` menambahkan `sukuBungaPerTahun` pada response. Kode error `95` baru: "Suku bunga loan style belum diisi" (catalog dengan suku bunga `<= 0`, mis. baris lama yang belum di-backfill setelah `ALTER ... DEFAULT 0`, ditolak). |
 | 1.4.0 | 27 Agustus 2026 | | Bug fix + **perubahan kontrak breaking**: `/jadwal` tidak lagi mengembalikan baris pencairan (`my_kode_trans=100`) tercampur dalam jadwal angsuran (§4.11.2 baru). `responseData` berubah dari array menjadi objek `{ jadwal: [...], totalPokok, totalBunga }` — field di dalam `jadwal[]` tidak berubah, client wajib membaca `responseData.jadwal`. |
 | 1.5.0 | 1 September 2026 | | **Perubahan kontrak breaking** pada dua endpoint kredit (keputusan BPR/M-Pay — angsuran pinjaman sekuensial, tanpa partial payment): `/pinjaman/tagihan` sekarang mengembalikan seluruh angsuran belum lunas terurut `angsuranKe` (§4.11.3 baru), bukan satu baris; `/transaksi/angsuranPinjaman` tidak lagi menerima `pokok`/`bunga` dari client (nilai diturunkan server dari jadwal) dan hanya menerima `angsuranKe` yang merupakan angsuran belum lunas paling awal (§4.15) — response-nya bertambah `pokok`/`bunga`/`denda`/`totalAngsuran`. Kode error baru (tetap `95`): "Pinjaman sudah lunas, tidak ada tagihan yang harus dibayar" · "Angsuran ke-N sudah dibayar" · "Angsuran ke-N harus dibayar terlebih dahulu" · "Data jadwal angsuran tidak valid". Tidak ada kode response baru maupun perubahan skema DB. |
+| 1.6.0 | 11 September 2026 | | Tambah §4.12 "Aturan produk On Call (registrasi)": `POST /deposito/registrasi` mengklasifikasi produk lewat `dep_produk.kode_jenis` (baru) dan membatasi `jkw` produk On Call (`kodeProduk=311`) ke **7 atau 14 hari**; tanggal jatuh tempo dihitung dalam hari (bukan bulan) untuk produk ini — sekaligus memperbaiki bug lama yang selalu menghitung jatuh tempo dalam bulan untuk semua produk. Kode error tetap `95` (tidak ada kode response baru). **Bukan breaking change** — `CreateDepositoRequestDTO` dan response `/registrasi` tidak berubah. |
+| 1.7.0 | 11 September 2026 | | **Koreksi §4.12** — memo BPR yang sebenarnya menetapkan suku bunga **per-tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 Sep 2026), bukan `suku_bunga_default` seperti tercatat pada versi 1.6.0. Dikoreksi: tidak ada lagi `jkw ∈ {7,14}` hardcoded — tenor yang diterima ditentukan oleh baris aktif di master baru `api_dep_oncall_rate` (per `kodeProduk`+`jkw`+periode, bentuk meniru `api_tab_campaign`, **tanpa fallback** ke default produk); pesan penolakan dikoreksi menjadi "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini". Tambah catatan cakupan API: akrual bunga & ARO/rollover adalah proses backoffice CBS; ketentuan memo #3/#5/#6 tidak di-enforce di level API. Kode error tetap `95`. **Tetap bukan breaking change.** |
 
 ---
 

@@ -64,6 +64,10 @@
 | TC-403 | Kredit — skenario end-to-end (tanpa loan style) | `POST /pinjaman/jadwal` menampilkan seluruh 3 periode jadwal beserta total pokok/bunga | Sedang | Positif |
 | TC-404 | Kredit — skenario end-to-end (tanpa loan style) | `POST /pinjaman/tagihan` pada tanggal jatuh tempo ke-1 menampilkan tagihan yang harus dibayar | Tinggi | Positif |
 | TC-405 | Kredit — skenario end-to-end (tanpa loan style) | `POST /transaksi/angsuranPinjaman` melunasi angsuran ke-1 berdasarkan hasil TC-404 | Tinggi | Positif |
+| TC-501 | Deposito — On Call | Registrasi `jkw=7` diterima, suku bunga diresolusi **2,50%** dari campaign `api_dep_oncall_rate` (bukan `suku_bunga_default` produk), `tglJt` = tanggal registrasi + 7 hari (regresi bug tanggal jatuh tempo) | Tinggi | Positif |
+| TC-502 | Deposito — On Call | Registrasi `jkw=14` diterima, suku bunga diresolusi **3,00%** dari campaign `api_dep_oncall_rate`, `tglJt` = tanggal registrasi + 14 hari | Tinggi | Positif |
+| TC-503 | Deposito — On Call | Registrasi dengan `jkw` yang tidak punya baris `api_dep_oncall_rate` aktif untuk tanggal tersebut (mis. `jkw=10`, atau `jkw=7` di luar periode program) ditolak `95`, "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini"; **tidak ada fallback** ke suku bunga default produk | Tinggi | Negatif |
+| TC-504 | Deposito — On Call | Regresi: validasi per-produk lama (`DepositoHelper.validateJkw`) tidak dipanggil untuk produk On Call | Sedang | Positif |
 
 ---
 
@@ -240,6 +244,33 @@ Berguna untuk SIT/UAT sebagai naskah demo end-to-end. Tidak menambah kasus unit 
 blok ini murni menyusun urutannya sebagai skenario bisnis yang bisa langsung dieksekusi manual
 di lingkungan SIT/UAT.
 
+### TC-501..TC-504 — Registrasi deposito On Call (tenor harian)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | Deposito — registrasi produk On Call (FR-013) |
+| Prioritas | Tinggi |
+| Pre-condition | Patch `patch_dep_produk_kode_jenis.sql`, `patch_dep_oncall_rate.sql`, dan seeder `seed_dep_oncall_rate.sql` sudah dijalankan; `dep_produk` `kodeProduk=311` ("Deposito On Call") punya `kode_jenis='2'`, `is_custom_rate=0`; `api_dep_oncall_rate` punya baris aktif `kodeProduk=311`/`jkw=7`/`suku_bunga=2.50` dan `kodeProduk=311`/`jkw=14`/`suku_bunga=3.00`, periode 2026-09-01 s/d 2026-09-30; `kode_kantor 001`, `nasabah NSB001` terverifikasi terdaftar |
+| Test Data | `CreateDepositoRequestDTO` dasar: `kodeKantor=001`, `userId=5`, `nasabahId=NSB001`, `kodeProduk=311`, `tglRegistrasi=2026-09-11`, `jmlDeposito=5000000`, `kodeAro=1`, `perlakuanBunga=1` (tanpa `sukuBunga` — tidak diterima dari client untuk produk ini) |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 (TC-501) | `POST /deposito/registrasi` dengan `jkw=7` | `00`; deposito tersimpan dengan `tglJt = 2026-09-18` (tglRegistrasi + **7 hari**, bukan 7 bulan); `sukuBunga = 2.50` diresolusi dari baris aktif `api_dep_oncall_rate` (`jkw=7`) — **bukan** `dep_produk.suku_bunga_default` | | ⬜ Belum |
+| 2 (TC-502) | Ulangi dengan `jkw=14` | `00`; `tglJt = 2026-09-25` (tglRegistrasi + **14 hari**); `sukuBunga = 3.00` diresolusi dari baris aktif `api_dep_oncall_rate` (`jkw=14`) | | ⬜ Belum |
+| 3 (TC-503) | Ulangi dengan `jkw=10` (tidak punya baris `api_dep_oncall_rate` aktif untuk produk ini pada tanggal registrasi) — variasi: `jkw=7` dengan `tglRegistrasi` di luar periode 1–30 September 2026 memberi hasil yang sama | HTTP 400 `95`, "Program deposito on call untuk jangka waktu 10 hari tidak tersedia pada tanggal ini"; deposito tidak dibuat; **tidak** jatuh ke `suku_bunga_default` | | ⬜ Belum |
+| 4 (TC-504) | (Regresi, verifikasi kode/log) Registrasi `jkw=7`/`jkw=14` pada produk `311` | Validasi per-produk lama (`DepositoHelper.validateJkw`, `JKW_RULES`) **tidak** dipanggil untuk produk On Call | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Mengikuti `services/DepositoServiceTest$OnCall` (4 kasus) di repo `microservice-core`
+— suite bertambah dari 156 menjadi 160 kasus. TC-501/TC-502 adalah kasus regresi utama yang
+membuktikan bug perhitungan `tglJt` (sebelumnya selalu `+bulan`, termasuk untuk tenor harian)
+sudah diperbaiki — sebelum perbaikan ini, deposit 7 hari akan jatuh tempo 7 bulan kemudian —
+dan sekaligus membuktikan suku bunga per-tenor (2,50%/3,00%) diresolusi dari master
+`api_dep_oncall_rate`, bukan `suku_bunga_default` produk (koreksi atas asumsi rilis awal fitur
+ini). TC-503 tidak lagi menguji sebuah set hardcoded `{7,14}` — ia menguji ketiadaan baris
+campaign aktif, yang juga mencakup kasus periode program berakhir. Tidak ada perubahan skema
+request/response — lihat §4.12 `03-api-contract.md`.
+
 ## 3. Rekapitulasi
 
 | Status | Jumlah |
@@ -263,6 +294,8 @@ di lingkungan SIT/UAT.
 | 1.2.3 | 25 Agustus 2026 | | TC-204 diperluas mencakup `sukuBungaPerTahun` juga diabaikan (bukan cuma `kodeProduk`). Tambah TC-215: `loanStyleId` dengan `suku_bunga_per_tahun<=0` (belum di-backfill) ditolak `95`. Tambah TC-216: `sukuBungaPerTahun` kosong pada jalur legacy ditolak `95`. TC-212 diperbarui: response `GET /loan-style` sekarang memuat `sukuBungaPerTahun`. Mengikuti `KreditServiceTest$LoanStylePath.ignoresClientSentKodeProdukAndSukuBunga`/`sukuBungaNotSet` + `LegacyPath.missingSukuBunga`. |
 | 1.3.0 | 1 September 2026 | | Tambah TC-301..TC-314: pembayaran angsuran pinjaman sekuensial tanpa partial payment (keputusan BPR/M-Pay) — `/pinjaman/tagihan` mengembalikan seluruh angsuran belum lunas (bukan satu baris); `/transaksi/angsuranPinjaman` menolak pembayaran sebagian/melompat dan menurunkan `pokok`/`bunga` dari jadwal server-side. Mengikuti `services/JadwalKreditServiceTest$GetTagihanKredit` (5 kasus) & `services/KretransServiceTest$TransKreditAngsuran` (9 kasus). Kasus usang `TransactionAmountValidationTest.angsuranPokokBunga` dihapus (field `pokok`/`bunga` tidak lagi ada pada request DTO). |
 | 1.3.1 | 1 September 2026 | | Tambah TC-401..TC-405: skenario end-to-end registrasi kredit **tanpa** `loanStyleId` (jalur legacy/non-M-Pay) → pencairan → inquiry jadwal → cek tagihan → pembayaran angsuran ke-1, menautkan §4.11.1/§4.14/§4.11.2/§4.11.3/§4.15 sebagai satu naskah uji manual SIT/UAT yang juga menghasilkan data pre-condition yang identik dengan TC-301..TC-314. Tidak menambah unit test baru — murni menyusun urutan skenario bisnis dari test unit yang sudah ada. |
+| 1.4.0 | 11 September 2026 | | Tambah TC-501..TC-504: registrasi deposito produk **On Call** (`kodeProduk=311`, tenor harian 7/14) — `jkw` di luar {7,14} ditolak `95`, dan regresi bug tanggal jatuh tempo (`tglJt` kini `+hari` untuk On Call, sebelumnya selalu `+bulan`). Mengikuti `services/DepositoServiceTest$OnCall` (4 kasus). Tidak ada perubahan kontrak request/response. |
+| 1.5.0 | 11 September 2026 | | **Koreksi TC-501..TC-503** — memo BPR sebenarnya menetapkan suku bunga **per-tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a), bukan `suku_bunga_default` seperti dicatat pada versi 1.4.0; TC-501/TC-502 kini menegaskan suku bunga diresolusi dari master baru `api_dep_oncall_rate`. TC-503 dikoreksi dari "`jkw` di luar {7,14}" (set hardcoded) menjadi "`jkw` tanpa baris `api_dep_oncall_rate` aktif" (juga mencakup kasus periode program berakhir), dengan pesan penolakan baru "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini" — **tanpa fallback** ke default produk. Pre-condition menambahkan patch `patch_dep_oncall_rate.sql` & seeder `seed_dep_oncall_rate.sql`. TC-504 tidak berubah. |
 
 ---
 

@@ -60,7 +60,7 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
   daftar nasabah WNA.
 - **Tabungan**: registrasi rekening, pencarian, inquiry saldo, dan daftar rekening.
 - **Pinjaman/Kredit**: registrasi, jadwal angsuran, tagihan, saldo, dan daftar pinjaman.
-- **Deposito**: registrasi (termasuk produk *special rate* dengan suku bunga kustom), inquiry saldo, dan daftar produk *special rate*.
+- **Deposito**: registrasi (termasuk produk *special rate* dengan suku bunga kustom dan produk **On Call** bertenor harian), inquiry saldo, dan daftar produk *special rate*.
 - **Transaksi (money-path)**: transaksi tabungan (setoran/penarikan/transfer), pencairan
   pinjaman, angsuran pinjaman, setoran deposito, cek status transaksi, dan reversal.
 - **Referensi transaksi**: daftar tipe integrasi transaksi & kode binding bank.
@@ -120,6 +120,9 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
 | BR-022 | Perubahan saldo minimum via API hanya boleh dilakukan **pejabat/supervisor yang ditunjuk**. | Wajib | Keputusan BPR: alur API **tanpa maker-checker** (berbeda dengan otorisasi backoffice CBS); kontrol pengganti = allowlist `tabung.minimum-editor-user-ids` (fail-closed bila kosong) + jejak audit BR-021. |
 | BR-023 | Pembayaran angsuran pinjaman via API **tidak boleh sebagian** (partial payment) — nasabah hanya dapat membayar satu angsuran penuh atau tidak membayar sama sekali. | Wajib | Keputusan BPR/M-Pay ("mirip fintech"); nominal pokok/bunga tidak lagi diterima dari aplikasi konsumen, selalu diturunkan sistem dari jadwal angsuran. |
 | BR-024 | Angsuran hanya boleh dibayar **berurutan mulai dari yang paling awal belum lunas** — tidak boleh melompati angsuran yang masih tertunggak, meskipun nasabah terlambat lebih dari satu periode. | Wajib | `POST /transaksi/angsuranPinjaman` menolak `angsuranKe` selain angsuran belum lunas paling awal; `POST /pinjaman/tagihan` menampilkan seluruh angsuran tertunggak agar kanal tahu urutan yang harus dibayar. |
+| BR-025 | Deposito **On Call** memakai tenor **harian** (7 atau 14 hari), bukan bulanan seperti produk deposito lainnya, dengan suku bunga **per-tenor** sesuai memo BPR (bukan default produk) — 7 hari = 2,5% p.a, 14 hari = 3% p.a, berlaku 1–30 September 2026. | Wajib | Klasifikasi produk (`dep_produk.kode_jenis`) diturunkan sistem dari master produk berdasarkan `kodeProduk`, **tidak pernah** dari payload; berlaku untuk `kodeProduk=311` ("Deposito On Call"). Suku bunga & tenor yang berlaku diturunkan dari master campaign `api_dep_oncall_rate` (per `kodeProduk`+`jkw`+periode), **bukan** `dep_produk.suku_bunga_default` — satu baris `dep_produk` tidak dapat menyimpan dua suku bunga berbeda untuk tenor yang berbeda. |
+| BR-026 | Registrasi deposito On Call yang tidak punya baris campaign aktif untuk `jkw` yang diminta (tenor tidak pernah ditawarkan, atau periode program sudah berakhir) harus **ditolak**, bukan jatuh ke default produk. | Wajib | `api_dep_oncall_rate` **tidak punya fallback** ke `dep_produk.suku_bunga_default` (berbeda dengan campaign saldo minimum tabungan yang punya fallback ke default produk) — nilai default bukan suku bunga program ini, sehingga fallback berisiko mengenakan bunga yang salah. |
+| BR-027 | Ruang lingkup API untuk deposito On Call **hanya** mencakup pembuatan rekening dengan `suku_bunga` & `tgl_jt` yang benar. Akrual bunga harian dan perlakuan ARO/rollover saat jatuh tempo adalah tanggung jawab **backoffice CBS**, di luar cakupan layanan ini. | Wajib | Ketentuan memo #3 (tanpa cash back), #5 (segmen retail/korporasi), #6 (hanya dana baru/*fresh fund*) bersifat prosedural/teller side — **tidak ada enforcement di level API**, karena tidak ada field pada endpoint ini yang dapat memvalidasinya. |
 
 ## 6. Proses Bisnis
 
@@ -184,6 +187,8 @@ uang.
 | RB-009 | Saldo minimum diturunkan tanpa dasar/otorisasi (alur API tanpa maker-checker) → dana yang dapat ditarik naik | Kerugian finansial, temuan audit | Nilai hanya dari campaign yang disetujui (bukan dari payload) + allowlist `tabung.minimum-editor-user-ids` (fail-closed) + jejak audit `api_tab_minimum_change` dalam satu transaksi (dapat dibuktikan & dibalikkan) + office scope `assertTabungOffice`. |
 | RB-010 | Campaign kedaluwarsa tetapi rekening tetap bebas saldo minimum | Pendapatan/kebijakan produk tidak tertagih | Campaign punya `tgl_mulai`/`tgl_akhir` (registrasi otomatis kembali ke default setelah periode habis); rekening existing dikembalikan dengan aksi `DEFAULT_PRODUK` — nilai asal tersimpan di `api_tab_minimum_change.minimum_lama`. |
 | RB-011 | Nasabah/kanal mencoba membayar sebagian atau melompati angsuran yang tertunggak | Rekonsiliasi jadwal kacau, saldo pinjaman tidak sinkron dengan jadwal | Server menolak (`95`) pembayaran selain angsuran belum lunas paling awal; nominal yang diposting selalu diturunkan dari jadwal, bukan dari client (BR-023, BR-024). |
+| RB-012 | Satuan tenor produk deposito (bulan vs hari) tidak dibedakan saat menghitung tanggal jatuh tempo, berisiko pada produk bertenor harian seperti On Call | Tanggal jatuh tempo salah (mis. tercatat bulan alih-alih hari), berdampak pada pencairan/perlakuan bunga | Perhitungan tanggal jatuh tempo kini bercabang menurut klasifikasi produk (`dep_produk.kode_jenis`): `+hari` untuk On Call, `+bulan` untuk produk lain; ditemukan & diperbaiki sebelum produk On Call pernah dipakai di produksi (belum ada nasabah yang terdampak). |
+| RB-013 | Registrasi On Call memakai suku bunga default produk alih-alih suku bunga per-tenor sesuai memo BPR (kesalahan asumsi desain awal, dikoreksi sebelum implementasi final) | Nasabah dikenakan/dijanjikan bunga yang salah (2,5%/3% p.a keliru tercatat sebagai `suku_bunga_default` produk) | Suku bunga kini diturunkan dari master `api_dep_oncall_rate` per `(kodeProduk, jkw, tanggal)`, bukan `dep_produk.suku_bunga_default`; tanpa baris campaign aktif yang cocok, registrasi **ditolak** (tidak ada fallback) — lihat BR-025/BR-026. Dikoreksi sebelum produk ini pernah dipakai di produksi. |
 
 ## 9. Kriteria Penerimaan (Acceptance Criteria)
 
@@ -212,6 +217,14 @@ uang.
 - `POST /pinjaman/tagihan` menampilkan seluruh angsuran belum lunas yang jatuh tempo hingga
   tanggal inquiry (bukan hanya satu baris), sehingga nasabah yang telat lebih dari satu periode
   tetap melihat seluruh tunggakannya.
+- Registrasi deposito produk **On Call** (`kodeProduk=311`) hanya menerima `jkw` yang punya baris
+  campaign aktif di `api_dep_oncall_rate` untuk tanggal registrasi tersebut (saat ini 7 hari @2,5%
+  p.a dan 14 hari @3% p.a, periode 1–30 September 2026); `jkw` lain atau di luar periode ditolak
+  (`95`) dengan pesan "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada
+  tanggal ini" — **tanpa fallback** ke suku bunga default produk. Tanggal jatuh tempo dihitung
+  sebagai tanggal registrasi + jumlah **hari** (bukan bulan) untuk produk ini.
+- Akrual bunga harian dan proses ARO/rollover saat jatuh tempo deposito On Call **tidak**
+  dilakukan oleh API ini — tetap menjadi proses backoffice CBS.
 
 ---
 
@@ -223,6 +236,8 @@ uang.
 | 1.1.0 | 16 Juli 2026 | | Ruang lingkup deposito diperluas: produk *special rate* (suku bunga kustom) & daftar produknya. |
 | 1.2.0 | 5 Agustus 2026 | | Nama database dibuat generik: `cma`/`cma_sys` → **`dbcore`/`dbcore_sys`** (nama skema spesifik lembaga tidak dipakai di dokumen yang di-deliver ke klien). Campaign **bebas saldo minimum** tabungan (permintaan BPR Sentosa): BR-019..BR-022 (campaign sebagai master data yang disetujui, nilai tidak dari payload, jejak audit wajib, allowlist pengganti maker-checker), risiko RB-009/RB-010, dan kriteria penerimaan terkait. |
 | 1.3.0 | 1 September 2026 | | BR-023/BR-024 baru (keputusan BPR/M-Pay): pembayaran angsuran pinjaman tidak boleh sebagian (partial payment) dan hanya angsuran belum lunas paling awal yang boleh dibayar (tidak boleh melompat). RB-011 baru & kriteria penerimaan terkait ditambahkan. |
+| 1.4.0 | 11 September 2026 | | BR-025 baru — produk deposito **On Call** (`kodeProduk=311`) bertenor harian (7/14 hari) memakai suku bunga default produk, bukan suku bunga kustom. RB-012 baru mencatat mitigasi bug tanggal jatuh tempo (perhitungan kini membedakan satuan hari vs bulan menurut klasifikasi produk), ditemukan & diperbaiki sebelum produk ini pernah dipakai di produksi. Kriteria penerimaan terkait ditambahkan. |
+| 1.5.0 | 11 September 2026 | | **Koreksi BR-025** — memo BPR asli "Program Deposito On Call" ternyata menetapkan suku bunga **berbeda per tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 September 2026), bukan suku bunga default produk seperti diasumsikan pada versi 1.4.0. BR-026 baru (registrasi ditolak tanpa fallback bila tidak ada campaign aktif yang cocok) dan BR-027 baru (cakupan API hanya pembuatan rekening — akrual bunga & ARO/rollover adalah tanggung jawab backoffice CBS; ketentuan memo #3/#5/#6 tidak di-enforce di level API). RB-013 baru mencatat koreksi asumsi desain ini (ditemukan & dikoreksi sebelum produk dipakai di produksi). Kriteria penerimaan terkait dikoreksi. |
 
 ---
 
