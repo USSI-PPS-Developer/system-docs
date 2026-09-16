@@ -6,7 +6,7 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | API Contract        |
-| Versi             | 1.0.2               |
+| Versi             | 1.0.3               |
 | Tanggal Dibuat    | 30 Juli 2026        |
 | Terakhir Diperbarui | 16 September 2026 |
 | Status            | 🟡 Draft            |
@@ -621,13 +621,14 @@ Tanpa parameter. Dapat dibaca semua peran yang login; baris difilter sesuai kant
 |-------|------------|
 | `etlName` | `TAB_TRANSACTION`, `DEP_TRANSACTION`, `KRD_TRANSACTION`, `SAVING_NOMINATIF`, `DEPOSIT_NOMINATIF`, `LOAN_NOMINATIF`, `CIF_SYNC` |
 | `branchCode` | Kantor |
-| `lastTrxId` | **Cursor** — id baris sumber terakhir yang tersalin. `null` = belum pernah jalan |
-| `lastTrxTime` | Waktu transaksi terakhir. **Tampilan saja**, bukan filter |
-| `lastRunAt` / `lastRunBy` | Waktu & pemicu run terakhir |
-| `secondsSinceLastRun` | Umur data dalam detik — angka yang dipakai menilai pipeline macet |
+| `lastTrxId` | **Cursor** — id baris sumber terakhir yang tersalin. Hanya berlaku untuk `TAB_TRANSACTION`/`DEP_TRANSACTION`/`KRD_TRANSACTION`, di mana `null` = belum pernah jalan. Untuk ketiga `*_NOMINATIF` **selalu `null`** — snapshot harian tidak punya cursor untuk dimajukan — jadi jangan dipakai untuk menilai "sudah jalan atau belum" pada ETL nominatif |
+| `lastTrxTime` | Untuk transaksi: waktu transaksi terakhir, **tampilan saja**, bukan filter. Untuk nominatif: tanggal snapshot (`reportDate`) terakhir yang berhasil diproses |
+| `lastRunAt` / `lastRunBy` | Waktu & pemicu run terakhir. Ini **satu-satunya** penanda "sudah jalan" yang berlaku untuk semua `etlName` termasuk nominatif — dicatat hanya dari jalur "hari ini" (terjadwal atau `POST /etl/biru-{tab,dep,krd}-nominatif`), **tidak** dari `POST .../backfill?date=` supaya backfill tanggal lama tidak memundurkan `lastTrxTime` |
+| `secondsSinceLastRun` | Umur data dalam detik sejak `lastRunAt` — angka yang dipakai menilai pipeline macet, termasuk untuk nominatif |
 
 Diurutkan berdasarkan `etlName` lalu `branchCode`. Metrik serupa tersedia sebagai gauge Prometheus
-`biru.etl.watermark.lag.seconds{etl="…"}`.
+`biru.etl.watermark.lag.seconds{etl="…"}` — sebelum perbaikan ini, ketiga ETL nominatif tidak pernah
+muncul di gauge tersebut karena `lastRunAt`-nya selalu `null`.
 
 ### 7.3 `GET /etl/reconcile`
 
@@ -898,6 +899,7 @@ curl https://biru.bpr.local/actuator/prometheus -H "X-API-Key: $BIRU_API_KEY"
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
 | 1.0.1 | 7 September 2026 | | Diverifikasi ulang terhadap kode saat ini. Perbaikan §2.6 & §8.2: kode error administrasi yang sebenarnya dikembalikan `AdminExceptionHandler` adalah `INVALID` (400, bukan `BAD_REQUEST`) dan `NOT_ALLOWED` (409, dipakai juga untuk pelanggaran keunikan username — bukan `CONFLICT` yang terpisah) |
 | 1.0.2 | 16 September 2026 | | §5.2 `GET /api/v1/nominatif/loan`: tambah field `altNumber` (`kredit.no_alternatif`, apa adanya, bisa `null`) |
+| 1.0.3 | 16 September 2026 | | §7.2 `GET /etl/status`: klarifikasi `lastTrxId` selalu `null` untuk ketiga ETL `*_NOMINATIF` (bukan penanda "belum jalan"), setelah perbaikan yang membuat `lastRunAt` ETL nominatif akhirnya terisi |
 
 ---
 
