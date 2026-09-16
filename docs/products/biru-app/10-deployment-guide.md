@@ -6,8 +6,9 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | Deployment Guide    |
-| Versi             | 1.0.0               |
+| Versi             | 1.0.1               |
 | Tanggal Dibuat    | 30 Juli 2026        |
+| Terakhir Diperbarui | 16 September 2026 |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
 | Direview oleh     |                     |
@@ -266,6 +267,11 @@ ALTER TABLE dbbiru.loan_nominatif
   CHANGE COLUMN principal_due principal_unbilled decimal(18,2) NULL,
   CHANGE COLUMN interest_due  interest_unbilled  decimal(18,2) NULL;
 
+-- Nomor rekening alternatif/lama (kredit.no_alternatif). Tanpa ini, setiap run KRD nominatif
+-- gagal dengan "Unknown column 'alt_number' in 'field list'".
+ALTER TABLE dbbiru.loan_nominatif
+  ADD COLUMN alt_number varchar(20) NULL AFTER account_number;
+
 -- Lebar kolom NIK: data BPR sering melebihi default.
 ALTER TABLE dbbiru.m_cif
   MODIFY COLUMN id_card_number varchar(50) DEFAULT NULL
@@ -273,7 +279,7 @@ ALTER TABLE dbbiru.m_cif
 ```
 
 ```sql
--- cek kolom loan_nominatif: harus keluar 18 baris
+-- cek kolom loan_nominatif: harus keluar 19 baris
 SELECT column_name, column_type
 FROM information_schema.columns
 WHERE table_schema = 'dbbiru' AND table_name = 'loan_nominatif'
@@ -282,7 +288,7 @@ WHERE table_schema = 'dbbiru' AND table_name = 'loan_nominatif'
                       'start_date','maturity_date','first_installment_date',
                       'last_installment_date','installment_amount','principal_billed',
                       'interest_billed','tenor_billed','tenor_unbilled','tenor_overdue',
-                      'principal_unbilled','interest_unbilled');
+                      'principal_unbilled','interest_unbilled','alt_number');
 ```
 
 Kalau masih muncul `principal_due`/`interest_due`, rename-nya belum dijalankan.
@@ -909,7 +915,8 @@ docker compose logs -f
 - [ ] Skema BIRU lengkap: `t_transaction_tab/dep/krd`, `m_cif`, `*_nominatif`, `etl_watermark`
 - [ ] 3 unique index `uq_source_*` terverifikasi ada
 - [ ] `m_cif.id_card_number` sudah `varchar(50)`
-- [ ] `loan_nominatif`: kolom baru ada, `principal_due`/`interest_due` sudah di-rename `*_unbilled`
+- [ ] `loan_nominatif`: kolom baru ada (termasuk `alt_number`), `principal_due`/`interest_due` sudah
+      di-rename `*_unbilled`
 - [ ] `etl_watermark` di-seed: 7 ETL × semua kantor, `last_trx_time` = tanggal cutoff
 - [ ] Tabel login/audit dibuat: `app_user`, `app_session`, `audit_log`
 - [ ] User DB: CORE `SELECT`-only, BIRU read/write, bisa login dari subnet Docker
@@ -1013,6 +1020,7 @@ Yang perlu disertakan saat eskalasi:
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
+| 1.0.1 | 16 September 2026 | | Patch DDL `loan_nominatif.alt_number` (§3.4) + checklist go-live |
 
 ---
 

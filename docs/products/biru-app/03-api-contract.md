@@ -6,9 +6,9 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | API Contract        |
-| Versi             | 1.0.1               |
+| Versi             | 1.0.2               |
 | Tanggal Dibuat    | 30 Juli 2026        |
-| Terakhir Diperbarui | 7 September 2026  |
+| Terakhir Diperbarui | 16 September 2026 |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
 | Direview oleh     |                     |
@@ -462,6 +462,7 @@ Snapshot kredit aktif. `data[]`:
 | Field | Tipe | Keterangan |
 |-------|------|------------|
 | `branchCode` · `reportDate` · `accountNumber` | | Kunci snapshot |
+| `altNumber` | string | Nomor rekening alternatif/lama — `kredit.no_alternatif`, apa adanya dari core (bisa `null`) |
 | `customerCif` · `customerFullname` | string | Nasabah |
 | `productCode` | string | Kode produk kredit |
 | `loanType` | string | Deskripsi jenis penggunaan (dari tabel kode core) |
@@ -896,6 +897,7 @@ curl https://biru.bpr.local/actuator/prometheus -H "X-API-Key: $BIRU_API_KEY"
 |-------|---------|----------|---------------------|
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
 | 1.0.1 | 7 September 2026 | | Diverifikasi ulang terhadap kode saat ini. Perbaikan §2.6 & §8.2: kode error administrasi yang sebenarnya dikembalikan `AdminExceptionHandler` adalah `INVALID` (400, bukan `BAD_REQUEST`) dan `NOT_ALLOWED` (409, dipakai juga untuk pelanggaran keunikan username — bukan `CONFLICT` yang terpisah) |
+| 1.0.2 | 16 September 2026 | | §5.2 `GET /api/v1/nominatif/loan`: tambah field `altNumber` (`kredit.no_alternatif`, apa adanya, bisa `null`) |
 
 ---
 

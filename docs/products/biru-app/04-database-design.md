@@ -6,8 +6,9 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | Desain Database     |
-| Versi             | 1.0.0               |
+| Versi             | 1.0.1               |
 | Tanggal Dibuat    | 30 Juli 2026        |
+| Terakhir Diperbarui | 16 September 2026 |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
 | Direview oleh     |                     |
@@ -327,6 +328,7 @@ Struktur identik dengan §3.4 (PK dan kolom sama).
 | `branch_code` | VARCHAR(10) | ❌ | **PK-1** |
 | `report_date` | DATE | ❌ | **PK-2** |
 | `account_number` | VARCHAR(20) | ❌ | **PK-3** |
+| `alt_number` | VARCHAR(20) | ✅ | Nomor rekening alternatif/lama — `kredit.no_alternatif`, apa adanya |
 | `customer_cif` | VARCHAR(20) | ✅ | CIF |
 | `customer_fullname` | VARCHAR(100) | ✅ | Nama nasabah |
 | `product_code` | VARCHAR(10) | ✅ | Kode produk kredit |
@@ -366,8 +368,9 @@ Struktur identik dengan §3.4 (PK dan kolom sama).
 > **Catatan riwayat kolom.** Dua kolom pernah bernama `principal_due` / `interest_due` padahal
 > isinya angka *unbilled*; keduanya di-*rename* menjadi `principal_unbilled` / `interest_unbilled`
 > di tempat (nilai lama tetap). Instalasi lama wajib menjalankan `ALTER` tersebut, dan patch
-> penambahan kolom jadwal angsuran/billed-unbilled — tanpa itu setiap run nominatif kredit gagal
-> dengan `Unknown column`. Perinciannya ada di [Deployment Guide §3](10-deployment-guide.md).
+> penambahan kolom jadwal angsuran/billed-unbilled serta `alt_number` — tanpa itu setiap run
+> nominatif kredit gagal dengan `Unknown column`. Perinciannya ada di
+> [Deployment Guide §3](10-deployment-guide.md).
 
 ### 3.7 `m_cif` — Master Nasabah
 
@@ -751,6 +754,7 @@ laporan bank; perhitungan ulang hanya menciptakan angka kedua yang harus direkon
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
+| 1.0.1 | 16 September 2026 | | Tambah kolom `loan_nominatif.alt_number` (`kredit.no_alternatif`) |
 
 ---
 
