@@ -6,9 +6,9 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | Deployment Guide    |
-| Versi             | 1.0.1               |
+| Versi             | 1.0.2               |
 | Tanggal Dibuat    | 30 Juli 2026        |
-| Terakhir Diperbarui | 16 September 2026 |
+| Terakhir Diperbarui | 17 September 2026 |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
 | Direview oleh     |                     |
@@ -236,8 +236,8 @@ ALTER TABLE t_transaction_tab
   ADD UNIQUE KEY uq_source_tabtrans (source_tabtrans_id, branch_code);
 ```
 
-Tabel BIRU lain yang harus ada: `m_cif`, `saving_nominatif`, `deposit_nominatif`, `loan_nominatif`,
-`etl_watermark`.
+Tabel BIRU lain yang harus ada: `m_cif`, `m_kantor`, `saving_nominatif`, `deposit_nominatif`,
+`loan_nominatif`, `etl_watermark`.
 
 Patch kolom yang wajib dijalankan di DB BIRU:
 
@@ -277,6 +277,29 @@ ALTER TABLE dbbiru.m_cif
   MODIFY COLUMN id_card_number varchar(50) DEFAULT NULL
   COMMENT 'NIK KTP - nasabah.no_id' AFTER full_name;
 ```
+
+`m_kantor` — tabel baru, nama kantor per kode untuk label di UI (`GET /api/v1/branches`).
+**Lepas dari `etl_watermark`**: yang itu daftar kantor yang diproses ETL, yang ini murni nama untuk
+tampilan — keduanya boleh sesaat tidak sinkron. Tanpa tabel ini, `GET /api/v1/branches` gagal
+dengan error SQL biasa (bukan kegagalan start), dan dropdown kantor di frontend jatuh balik
+menampilkan kode polos:
+
+```sql
+CREATE TABLE IF NOT EXISTS dbbiru.m_kantor (
+  branch_code VARCHAR(10)  NOT NULL,
+  branch_name VARCHAR(150) NOT NULL,
+  PRIMARY KEY (branch_code)
+);
+
+-- Seed per klien — ganti sesuai kantor instalasi ini:
+INSERT INTO dbbiru.m_kantor (branch_code, branch_name) VALUES
+  ('001', 'PT. BPR KARYA PRIMA SENTOSA'),
+  ('002', 'PT. BPR KARYA PRIMA SENTOSA (Cabang Dukuh Atas)')
+ON DUPLICATE KEY UPDATE branch_name = VALUES(branch_name);
+```
+
+Tidak ada layar admin untuk mengelola isinya — kantor jarang berubah, jadi `INSERT`/`UPDATE`
+langsung di database sudah cukup, sama seperti men-seed `etl_watermark` untuk kantor baru.
 
 ```sql
 -- cek kolom loan_nominatif: harus keluar 19 baris
@@ -912,7 +935,8 @@ docker compose logs -f
 - [ ] Backup CORE & BIRU sudah diambil
 - [ ] `ALTER` kolom CORE sesuai generasi core (`jam_trans`, `kuitansi_id`) — di luar jam kerja
 - [ ] Baris sentinel ber-id ekstrem dicek & dihapus di `tabtrans`/`deptrans`/`kretrans`
-- [ ] Skema BIRU lengkap: `t_transaction_tab/dep/krd`, `m_cif`, `*_nominatif`, `etl_watermark`
+- [ ] Skema BIRU lengkap: `t_transaction_tab/dep/krd`, `m_cif`, `m_kantor`, `*_nominatif`, `etl_watermark`
+- [ ] `m_kantor` sudah diisi nama kantor sesuai instalasi ini (§3.4)
 - [ ] 3 unique index `uq_source_*` terverifikasi ada
 - [ ] `m_cif.id_card_number` sudah `varchar(50)`
 - [ ] `loan_nominatif`: kolom baru ada (termasuk `alt_number`), `principal_due`/`interest_due` sudah
@@ -1021,6 +1045,7 @@ Yang perlu disertakan saat eskalasi:
 |-------|---------|----------|---------------------|
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
 | 1.0.1 | 16 September 2026 | | Patch DDL `loan_nominatif.alt_number` (§3.4) + checklist go-live |
+| 1.0.2 | 17 September 2026 | | Tabel baru `m_kantor` + seed contoh (§3.4) untuk `GET /api/v1/branches`, checklist go-live |
 
 ---
 

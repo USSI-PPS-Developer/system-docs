@@ -6,9 +6,9 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | API Contract        |
-| Versi             | 1.0.3               |
+| Versi             | 1.0.4               |
 | Tanggal Dibuat    | 30 Juli 2026        |
-| Terakhir Diperbarui | 16 September 2026 |
+| Terakhir Diperbarui | 17 September 2026 |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
 | Direview oleh     |                     |
@@ -497,9 +497,46 @@ Snapshot kredit aktif. `data[]`:
 
 ---
 
-## 6. Endpoint — Nasabah (`/api/v1/customers/**`)
+## 6. Endpoint — Referensi Kantor (`/api/v1/branches`)
 
-### 6.1 `GET /api/v1/customers`
+### 6.1 `GET /api/v1/branches`
+
+Kode + nama resmi kantor, dari tabel `m_kantor` — **murni referensi tampilan** (label dropdown,
+chip filter di UI), lepas dari `etl_watermark`. Tidak ada keputusan otorisasi atau pemrosesan
+data yang bergantung padanya; kalau `m_kantor` belum ada baris untuk suatu kode, UI cukup
+menampilkan kodenya polos.
+
+Tanpa parameter. Peran mana pun yang login boleh baca. Tidak menerima `branchCode` — sama seperti
+`GET /etl/status`, sehingga pemfilteran per kantor dikerjakan sendiri oleh controller ini (bukan
+`BranchScopeFilter`): akun ber-`branch_code` hanya melihat baris kantornya sendiri.
+
+```json
+{
+  "status": 200,
+  "data": [
+    { "branchCode": "001", "branchName": "PT. BPR KARYA PRIMA SENTOSA" },
+    { "branchCode": "002", "branchName": "PT. BPR KARYA PRIMA SENTOSA (Cabang Dukuh Atas)" }
+  ],
+  "total": 2
+}
+```
+
+| Field | Keterangan |
+|-------|------------|
+| `branchCode` | Kode kantor |
+| `branchName` | Nama resmi kantor |
+
+Diurutkan berdasarkan `branchCode`. `m_kantor` **tidak** dijaga sinkron ketat dengan
+`etl_watermark`: yang satu daftar kantor yang diproses ETL, yang ini murni nama untuk tampilan —
+keduanya boleh berbeda isi sesaat (mis. kantor baru sudah ada di salah satu, belum di yang lain).
+Tidak ada endpoint admin untuk mengelola isinya — kantor jarang berubah, jadi `INSERT`/`UPDATE`
+langsung di database (dicatat di `../BIRU/CHANGELOG.md` § Deployment notes) sudah cukup.
+
+---
+
+## 7. Endpoint — Nasabah (`/api/v1/customers/**`)
+
+### 7.1 `GET /api/v1/customers`
 
 | Parameter | Tipe | Wajib | Default | Keterangan |
 |-----------|------|-------|---------|------------|
@@ -541,24 +578,24 @@ Snapshot kredit aktif. `data[]`:
 > `gender` bernilai `L`, `P`, atau `null`. Nilai lain di core **dinormalisasi menjadi `null`** oleh
 > aplikasi — data CORE tidak diubah.
 
-### 6.2 `GET /api/v1/customers/{cif}`
+### 7.2 `GET /api/v1/customers/{cif}`
 
 | Parameter | Tipe | Wajib | Keterangan |
 |-----------|------|-------|------------|
 | `cif` (path) | string | ✅ | CIF nasabah |
 | `branchCode` (query) | string | ✅ | Kantor |
 
-**Response `200 OK`** — objek nasabah (bentuk seperti elemen `data` di §6.1), tanpa selubung.
+**Response `200 OK`** — objek nasabah (bentuk seperti elemen `data` di §7.1), tanpa selubung.
 **`404 Not Found`** tanpa body bila kombinasi CIF + kantor tidak ada.
 
 ---
 
-## 7. Endpoint — Operasional ETL (`/etl/**`)
+## 8. Endpoint — Operasional ETL (`/etl/**`)
 
 Peran: `OPS`, `ADMIN`, `SYSTEM` — **kecuali** `GET /etl/status` yang boleh dibaca setiap pengguna
 yang login. Semua `POST` wajib `X-BIRU-Client: web` bila memakai cookie.
 
-### 7.1 Pemicu & backfill
+### 8.1 Pemicu & backfill
 
 | Method | Path | Keterangan |
 |--------|------|------------|
@@ -601,7 +638,7 @@ yang login. Semua `POST` wajib `X-BIRU-Client: web` bila memakai cookie.
 > `202` berarti **diterima**, bukan **selesai**. Hasilnya dipantau lewat `GET /etl/status`,
 > `GET /etl/reconcile`, dan log. Backfill tidak menggeser cursor watermark.
 
-### 7.2 `GET /etl/status`
+### 8.2 `GET /etl/status`
 
 Tanpa parameter. Dapat dibaca semua peran yang login; baris difilter sesuai kantor pemanggil.
 
@@ -630,7 +667,7 @@ Diurutkan berdasarkan `etlName` lalu `branchCode`. Metrik serupa tersedia sebaga
 `biru.etl.watermark.lag.seconds{etl="…"}` — sebelum perbaikan ini, ketiga ETL nominatif tidak pernah
 muncul di gauge tersebut karena `lastRunAt`-nya selalu `null`.
 
-### 7.3 `GET /etl/reconcile`
+### 8.3 `GET /etl/reconcile`
 
 Peran `OPS`/`ADMIN`/`SYSTEM`. Terlihat seperti bacaan biasa, tetapi **menjalankan `COUNT` di CORE
 untuk setiap kantor** — itulah alasannya tidak dibuka untuk `VIEWER`.
@@ -663,13 +700,13 @@ untuk setiap kantor** — itulah alasannya tidak dibuka untuk `VIEWER`.
 
 ---
 
-## 8. Endpoint — Administrasi (`/api/v1/admin/**`, ADMIN)
+## 9. Endpoint — Administrasi (`/api/v1/admin/**`, ADMIN)
 
 Prefix ini **harus** dievaluasi sebelum `/api/**`; bila tidak, daftar akun akan terbuka bagi setiap
 pengguna yang login. Endpoint administrasi sengaja **tidak** diletakkan di bawah `/auth/**`, karena
 `/auth/**` terbuka bagi sesi mana pun — termasuk sesi yang sedang ditahan di gerbang ganti password.
 
-### 8.1 `GET /api/v1/admin/users`
+### 9.1 `GET /api/v1/admin/users`
 
 ```json
 {
@@ -689,7 +726,7 @@ pengguna yang login. Endpoint administrasi sengaja **tidak** diletakkan di bawah
 | `branchCode` | `null` = semua kantor |
 | `lockedUntil` | Terisi & masih di masa depan = terkunci karena gagal login berturut-turut |
 
-### 8.2 `POST /api/v1/admin/users`
+### 9.2 `POST /api/v1/admin/users`
 
 ```json
 {
@@ -709,11 +746,11 @@ pengguna yang login. Endpoint administrasi sengaja **tidak** diletakkan di bawah
 | `branchCode` | string | ❌ | Maks 8; kosong = semua kantor |
 | `password` | string | ✅ | Memenuhi panjang minimum |
 
-**`201 Created`** — badan berbentuk seperti elemen §8.1. Akun baru selalu `mustChangePassword=true`.
+**`201 Created`** — badan berbentuk seperti elemen §9.1. Akun baru selalu `mustChangePassword=true`.
 
 **Error**: `400 INVALID` (validasi `@Valid`) · `409 NOT_ALLOWED` (username sudah ada — baik dari pemeriksaan `create` maupun dari pelanggaran `uk_app_user_username` saat dua permintaan bentrok).
 
-### 8.3 `PATCH /api/v1/admin/users/{id}`
+### 9.3 `PATCH /api/v1/admin/users/{id}`
 
 Field yang **tidak dikirim tidak diubah**.
 
@@ -737,7 +774,7 @@ Field yang **tidak dikirim tidak diubah**.
 mengubah peran sendiri; menonaktifkan diri sendiri; memperluas kantor sendiri.
 `404 NOT_FOUND` bila id tidak ada.
 
-### 8.4 `POST /api/v1/admin/users/{id}/reset-password`
+### 9.4 `POST /api/v1/admin/users/{id}/reset-password`
 
 ```json
 { "newPassword": "password-sementara-min-12" }
@@ -751,7 +788,7 @@ mengubah peran sendiri; menonaktifkan diri sendiri; memperluas kantor sendiri.
 
 Selalu memaksa ganti password saat login berikutnya, dan **mencabut seluruh sesi** pengguna itu.
 
-### 8.5 `GET /api/v1/admin/audit`
+### 9.5 `GET /api/v1/admin/audit`
 
 | Parameter | Tipe | Wajib | Default | Keterangan |
 |-----------|------|-------|---------|------------|
@@ -789,7 +826,7 @@ Selalu memaksa ganti password saat login berikutnya, dan **mencabut seluruh sesi
 
 ---
 
-## 9. Endpoint — Operasional Platform
+## 10. Endpoint — Operasional Platform
 
 | Method | Path | Akses | Keterangan |
 |--------|------|-------|------------|
@@ -805,9 +842,9 @@ kesehatan tidak ditampilkan (`show-details=never`).
 
 ---
 
-## 10. Contoh Pemakaian
+## 11. Contoh Pemakaian
 
-### 10.1 Alur browser (aplikasi web)
+### 11.1 Alur browser (aplikasi web)
 
 ```bash
 # 1. Login — simpan cookie
@@ -832,7 +869,7 @@ curl -b cookies.txt -X POST https://biru.bpr.local/auth/change-password \
 curl -b cookies.txt -X POST https://biru.bpr.local/auth/logout -H 'X-BIRU-Client: web'
 ```
 
-### 10.2 Alur mesin (cron / monitoring)
+### 11.2 Alur mesin (cron / monitoring)
 
 ```bash
 # Pemicu ETL dari cron luar
@@ -851,7 +888,7 @@ curl 'https://biru.bpr.local/etl/reconcile?date=2026-07-29&domain=TAB&domain=KRD
 curl https://biru.bpr.local/actuator/prometheus -H "X-API-Key: $BIRU_API_KEY"
 ```
 
-### 10.3 Menarik seluruh transaksi satu bulan (export bertahap)
+### 11.3 Menarik seluruh transaksi satu bulan (export bertahap)
 
 ```
 1. GET …/transactions/saving?dateFrom=2026-07-01&dateTo=2026-07-31&limit=1000
@@ -862,7 +899,7 @@ curl https://biru.bpr.local/actuator/prometheus -H "X-API-Key: $BIRU_API_KEY"
 
 ---
 
-## 11. Ringkasan Endpoint
+## 12. Ringkasan Endpoint
 
 | # | Method | Path | Akses | Keterangan |
 |---|--------|------|-------|------------|
@@ -876,19 +913,20 @@ curl https://biru.bpr.local/actuator/prometheus -H "X-API-Key: $BIRU_API_KEY"
 | 8 | GET | `/api/v1/nominatif/saving` | Login | Nominatif tabungan |
 | 9 | GET | `/api/v1/nominatif/deposit` | Login | Nominatif deposito |
 | 10 | GET | `/api/v1/nominatif/loan` | Login | Nominatif kredit |
-| 11 | GET | `/api/v1/customers` | Login | Daftar nasabah per kantor |
-| 12 | GET | `/api/v1/customers/{cif}` | Login | Detail nasabah |
-| 13–24 | POST | `/etl/biru-{tab,dep,krd}-{transactions,nominatif}[/backfill]` | OPS/ADMIN/SYSTEM | 6 pemicu + 6 backfill |
-| 25 | GET | `/etl/status` | Login | Status watermark & kesegaran data |
-| 26 | GET | `/etl/reconcile` | OPS/ADMIN/SYSTEM | Rekonsiliasi CORE↔BIRU |
-| 27 | GET | `/api/v1/admin/users` | ADMIN | Daftar akun |
-| 28 | POST | `/api/v1/admin/users` | ADMIN | Buat akun |
-| 29 | PATCH | `/api/v1/admin/users/{id}` | ADMIN | Ubah akun |
-| 30 | POST | `/api/v1/admin/users/{id}/reset-password` | ADMIN | Reset password |
-| 31 | GET | `/api/v1/admin/audit` | ADMIN | Jejak audit |
-| 32 | GET | `/actuator/health` | Terbuka | Health check |
-| 33 | GET | `/actuator/{info,metrics,prometheus}` | ADMIN/SYSTEM | Metrik |
-| 34 | GET | `/docs`, `/v3/api-docs` | Terbuka (dapat dimatikan) | Dokumentasi API |
+| 11 | GET | `/api/v1/branches` | Login (dibatasi kantor) | Nama kantor per kode (`m_kantor`), untuk label UI |
+| 12 | GET | `/api/v1/customers` | Login | Daftar nasabah per kantor |
+| 13 | GET | `/api/v1/customers/{cif}` | Login | Detail nasabah |
+| 14–25 | POST | `/etl/biru-{tab,dep,krd}-{transactions,nominatif}[/backfill]` | OPS/ADMIN/SYSTEM | 6 pemicu + 6 backfill |
+| 26 | GET | `/etl/status` | Login | Status watermark & kesegaran data |
+| 27 | GET | `/etl/reconcile` | OPS/ADMIN/SYSTEM | Rekonsiliasi CORE↔BIRU |
+| 28 | GET | `/api/v1/admin/users` | ADMIN | Daftar akun |
+| 29 | POST | `/api/v1/admin/users` | ADMIN | Buat akun |
+| 30 | PATCH | `/api/v1/admin/users/{id}` | ADMIN | Ubah akun |
+| 31 | POST | `/api/v1/admin/users/{id}/reset-password` | ADMIN | Reset password |
+| 32 | GET | `/api/v1/admin/audit` | ADMIN | Jejak audit |
+| 33 | GET | `/actuator/health` | Terbuka | Health check |
+| 34 | GET | `/actuator/{info,metrics,prometheus}` | ADMIN/SYSTEM | Metrik |
+| 35 | GET | `/docs`, `/v3/api-docs` | Terbuka (dapat dimatikan) | Dokumentasi API |
 
 ---
 
@@ -899,7 +937,8 @@ curl https://biru.bpr.local/actuator/prometheus -H "X-API-Key: $BIRU_API_KEY"
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
 | 1.0.1 | 7 September 2026 | | Diverifikasi ulang terhadap kode saat ini. Perbaikan §2.6 & §8.2: kode error administrasi yang sebenarnya dikembalikan `AdminExceptionHandler` adalah `INVALID` (400, bukan `BAD_REQUEST`) dan `NOT_ALLOWED` (409, dipakai juga untuk pelanggaran keunikan username — bukan `CONFLICT` yang terpisah) |
 | 1.0.2 | 16 September 2026 | | §5.2 `GET /api/v1/nominatif/loan`: tambah field `altNumber` (`kredit.no_alternatif`, apa adanya, bisa `null`) |
-| 1.0.3 | 16 September 2026 | | §7.2 `GET /etl/status`: klarifikasi `lastTrxId` selalu `null` untuk ketiga ETL `*_NOMINATIF` (bukan penanda "belum jalan"), setelah perbaikan yang membuat `lastRunAt` ETL nominatif akhirnya terisi |
+| 1.0.3 | 16 September 2026 | | §8.2 `GET /etl/status`: klarifikasi `lastTrxId` selalu `null` untuk ketiga ETL `*_NOMINATIF` (bukan penanda "belum jalan"), setelah perbaikan yang membuat `lastRunAt` ETL nominatif akhirnya terisi |
+| 1.0.4 | 17 September 2026 | | Endpoint baru §6 `GET /api/v1/branches` (nama kantor dari `m_kantor`, untuk label UI). Bagian §6–§11 lama digeser jadi §7–§12 (termasuk sub-bagian dan tabel Ringkasan Endpoint) |
 
 ---
 

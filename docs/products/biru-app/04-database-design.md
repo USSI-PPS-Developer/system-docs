@@ -6,9 +6,9 @@
 |-------------------|---------------------|
 | Produk            | BIRU App            |
 | Jenis Dokumen     | Desain Database     |
-| Versi             | 1.0.1               |
+| Versi             | 1.0.2               |
 | Tanggal Dibuat    | 30 Juli 2026        |
-| Terakhir Diperbarui | 16 September 2026 |
+| Terakhir Diperbarui | 17 September 2026 |
 | Status            | 🟡 Draft            |
 | Disusun oleh      |                     |
 | Direview oleh     |                     |
@@ -67,10 +67,11 @@ Aturan yang mengikutinya:
 | 5 | `deposit_nominatif` | Snapshot | Posisi rekening deposito per tanggal laporan | `INSERT … ON DUPLICATE KEY UPDATE` |
 | 6 | `loan_nominatif` | Snapshot | Posisi kredit per tanggal laporan | `INSERT … ON DUPLICATE KEY UPDATE` |
 | 7 | `m_cif` | Master | Data nasabah + penanda kepemilikan produk | `INSERT … ON DUPLICATE KEY UPDATE` |
-| 8 | `etl_watermark` | Kontrol | Cursor & daftar kantor per ETL | `UPDATE` (di-seed manual) |
-| 9 | `app_user` | Auth | Akun aplikasi | CRUD lewat administrasi |
-| 10 | `app_session` | Auth | Sesi aktif (hash token) | INSERT / UPDATE (revoke) / DELETE (purge) |
-| 11 | `audit_log` | Audit | Jejak seluruh aktivitas | INSERT (+ DELETE oleh retensi) |
+| 8 | `m_kantor` | Master | Nama resmi kantor per kode, untuk label UI | `INSERT`/`UPDATE` manual (jarang berubah) |
+| 9 | `etl_watermark` | Kontrol | Cursor & daftar kantor per ETL | `UPDATE` (di-seed manual) |
+| 10 | `app_user` | Auth | Akun aplikasi | CRUD lewat administrasi |
+| 11 | `app_session` | Auth | Sesi aktif (hash token) | INSERT / UPDATE (revoke) / DELETE (purge) |
+| 12 | `audit_log` | Audit | Jejak seluruh aktivitas | INSERT (+ DELETE oleh retensi) |
 
 ### 1.2 Database CORE (read-only)
 
@@ -398,7 +399,26 @@ Struktur identik dengan §3.4 (PK dan kolom sama).
 > `branch_code` ikut menjadi bagian kunci karena satu CIF dikelola pada kantor tertentu; pemisahan
 > per kantor inilah yang membuat pembatasan akses per kantor bisa dijalankan atas tabel ini.
 
-### 3.8 `etl_watermark` — Kontrol ETL
+### 3.8 `m_kantor` — Master Kantor
+
+| Kolom | Tipe | Null | Keterangan |
+|-------|------|------|------------|
+| `branch_code` | VARCHAR(10) | ❌ | **PK** Kode kantor |
+| `branch_name` | VARCHAR(150) | ❌ | Nama resmi kantor |
+
+**Kunci**: PRIMARY (`branch_code`).
+
+> **Murni referensi tampilan** — sumber `GET /api/v1/branches`, dipakai UI untuk label dropdown/chip
+> ("001 - PT. BPR KARYA PRIMA SENTOSA"). Tidak ada keputusan otorisasi atau pemrosesan ETL apa pun
+> yang membacanya. **Sengaja lepas dari `etl_watermark`**: tabel itu daftar kantor yang diproses ETL
+> (satu baris per kombinasi ETL×kantor), tabel ini murni kode→nama — keduanya boleh sesaat tidak
+> sinkron (kantor baru bisa muncul di salah satu lebih dulu). Tidak diperiksa saat startup aplikasi;
+> kalau belum ada, `GET /api/v1/branches` gagal dengan error SQL biasa, bukan kegagalan boot, dan UI
+> jatuh balik menampilkan kode polos. Tidak ada layar admin untuk mengelolanya — kantor jarang
+> berubah, jadi `INSERT`/`UPDATE` langsung di database sudah cukup (lihat
+> [Deployment Guide §3.2](10-deployment-guide.md)).
+
+### 3.9 `etl_watermark` — Kontrol ETL
 
 | Kolom | Tipe | Null | Keterangan |
 |-------|------|------|------------|
@@ -430,7 +450,7 @@ Aturan seeding:
 | terisi | NULL | Aplikasi menurunkan batas id yang setara pada run pertama, lalu **menyimpannya** — pencarian ini sekali saja per kantor |
 | NULL | NULL | Tidak dianjurkan: berarti mulai dari id 0 = **mereplikasi seluruh sejarah**; aplikasi hanya memberi peringatan keras (`last_trx_time` sendiri `NOT NULL`, jadi harus diisi) |
 
-### 3.9 Mengapa cursor memakai `last_trx_id`, bukan `last_trx_time`
+### 3.10 Mengapa cursor memakai `last_trx_id`, bukan `last_trx_time`
 
 Query inkremental memfilter **hanya** `source_id > last_trx_id`. `last_trx_time` ditulis setiap
 batch tetapi dibaca hanya oleh `/etl/status` dan gauge keterlambatan.
@@ -755,6 +775,7 @@ laporan bank; perhitungan ulang hanya menciptakan angka kedua yang harus direkon
 |-------|---------|----------|---------------------|
 | 1.0.0 | 30 Juli 2026 | | Dokumen dibuat |
 | 1.0.1 | 16 September 2026 | | Tambah kolom `loan_nominatif.alt_number` (`kredit.no_alternatif`) |
+| 1.0.2 | 17 September 2026 | | Tabel baru §3.8 `m_kantor` (nama kantor per kode, untuk `GET /api/v1/branches`); §1.1 & §3.9–§3.10 digeser |
 
 ---
 
