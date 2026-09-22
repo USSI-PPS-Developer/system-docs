@@ -68,6 +68,11 @@
 | TC-502 | Deposito — On Call | Registrasi `jkw=14` diterima, suku bunga diresolusi **3,00%** dari campaign `api_dep_oncall_rate`, `tglJt` = tanggal registrasi + 14 hari | Tinggi | Positif |
 | TC-503 | Deposito — On Call | Registrasi dengan `jkw` yang tidak punya baris `api_dep_oncall_rate` aktif untuk tanggal tersebut (mis. `jkw=10`, atau `jkw=7` di luar periode program) ditolak `95`, "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini"; **tidak ada fallback** ke suku bunga default produk | Tinggi | Negatif |
 | TC-504 | Deposito — On Call | Regresi: validasi per-produk lama (`DepositoHelper.validateJkw`) tidak dipanggil untuk produk On Call | Sedang | Positif |
+| TC-601 | Transaksi — reversal tabungan | Reversal setoran (`D1`) saat saldo tidak mencukupi ditolak `95` & tidak ada baris ditulis | Kritis | Negatif |
+| TC-602 | Transaksi — reversal tabungan | Reversal setoran (`D1`) saat saldo masih mencukupi tetap berhasil | Kritis | Positif |
+| TC-603 | Transaksi — reversal tabungan | Reversal transfer (`T1`): leg penerima yang saldonya kurang ditolak; leg pengirim (dikredit balik) tidak ikut dicek | Kritis | Negatif |
+| TC-604 | Transaksi — reversal tabungan | Rekening tanpa data saldo diperlakukan saldo 0 (fail-closed), bukan lolos | Tinggi | Negatif |
+| TC-605 | Transaksi — reversal tabungan | Saldo efektif tepat sama dengan pokok tetap diterima (batas `>=`) | Sedang | Positif |
 
 ---
 
@@ -271,6 +276,50 @@ ini). TC-503 tidak lagi menguji sebuah set hardcoded `{7,14}` — ia menguji ket
 campaign aktif, yang juga mencakup kasus periode program berakhir. Tidak ada perubahan skema
 request/response — lihat §4.12 `03-api-contract.md`.
 
+### TC-601..TC-605 — Validasi saldo pada reversal transaksi tabungan
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | Transaksi — reversal tabungan (FR-019, BR-011a) |
+| Prioritas | **Kritis** (jalur uang — bug produksi) |
+| Pre-condition | Tidak ada patch DB yang perlu dijalankan. Rekening `A` = `001201000371` (kantor `001`), rekening `B` = `001201000305`. Token milik user kantor `001`. Header standar (`Authorization`, `X-IDEMPOTENCY-KEY`) terpenuhi. |
+| Test Data | Transaksi asli sudah diposting dan **belum** pernah di-reverse; saldo rekening sengaja diturunkan (lewat penarikan/transfer sah) di antara tanggal transaksi asli dan tanggal reversal, meniru kondisi produksi. |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 (TC-601) | Posting setoran `D1` 500.000 ke rekening `A`. Turunkan saldo efektif `A` menjadi 345.351 lewat penarikan sah. `POST /transaksi/reversal` `{kuitansi, tipeTrans:"D1"}` | HTTP 400 `95`, pesan "Reversal ditolak: saldo rekening 001201000371 tidak mencukupi. Dibutuhkan 500000, saldo efektif tersedia 345351 (kurang 154649)". **Tidak ada** baris `tabtrans` reversal, **tidak ada** jurnal, **tidak ada** baris `api_transaction_log`; `tabung.saldo_akhir` tidak berubah dan **tidak negatif** | | ⬜ Belum |
+| 2 (TC-602) | Posting setoran `D1` 25.000 ke rekening `A` yang saldo efektifnya 909.351. Reverse | `00`; baris reversal tertulis, `tabung.saldo_akhir` berkurang 25.000, response memuat `kuitansi` asli + akhiran `R` | | ⬜ Belum |
+| 3 (TC-603) | Transfer `T1` 100.000 dari `A` ke `B`. Habiskan saldo `B` sampai saldo efektif 40.000. Reverse transaksi transfer tersebut | HTTP 400 `95`, pesan menyebut rekening **`B`** (penerima) — bukan `A`. Saldo kedua rekening tidak berubah. Regresi: leg `A` yang justru **dikredit balik** tidak boleh ikut ditolak karena alasan saldo | | ⬜ Belum |
+| 4 (TC-604) | Reverse `D1` pada rekening yang tidak punya baris mutasi/tidak ditemukan pada query saldo | Ditolak `95` (saldo diperlakukan 0 — **fail-closed**), bukan diloloskan | | ⬜ Belum |
+| 5 (TC-605) | Reverse `D1` sebesar 25.000 pada rekening yang saldo efektifnya tepat 25.000 | `00`; diterima (batas perbandingan `>=`, bukan `>`); saldo efektif berakhir 0, tidak negatif | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Mengikuti `services/TabtransReversalSaldoTest` (5 kasus) di repo `microservice-core`
+— suite bertambah dari 193 menjadi 198 kasus. Ini adalah **regresi atas bug produksi**: rekening
+`001201000371` ditemukan bersaldo **-4.649** karena 12 transaksi bulan Juli 2026 di-reverse
+serentak pada 6 Agustus 2026, saat saldonya sudah berubah, tanpa validasi apa pun. TC-601 dan
+TC-603 adalah dua bentuk bug yang sama: reversal **setoran** dan reversal **sisi penerima
+transfer** sama-sama mendebet rekening. Aturan saldo yang dipakai identik dengan posting normal
+(`saldo_akhir - saldo_blokir - minimum >= pokok`) — lihat §4.17 `03-api-contract.md` dan detail
+FR-019 di `02-srs.md`. Tidak ada perubahan skema request/response.
+
+**Query deteksi (untuk verifikasi manual / audit berkala):**
+```sql
+SELECT t.no_rekening, n.nasabah_id, n.nama_nasabah,
+       SUM(CASE WHEN FLOOR(t.my_kode_trans / 100) = 1 THEN t.pokok
+                WHEN FLOOR(t.my_kode_trans / 100) = 2 THEN -t.pokok
+                ELSE 0 END) AS saldo_akhir
+FROM tabtrans t
+JOIN tabung tb ON tb.no_rekening = t.no_rekening
+JOIN nasabah n ON n.nasabah_id = tb.nasabah_id
+WHERE t.tgl_trans <= CURDATE()
+GROUP BY t.no_rekening
+HAVING saldo_akhir < 0;
+```
+Setelah perbaikan ini, query di atas **tidak boleh** menghasilkan baris baru. Baris yang sudah
+ada sebelum perbaikan (termasuk `001201000371`) **tidak** dikoreksi otomatis — koreksinya adalah
+keputusan/jurnal penyesuaian terpisah di sisi BPR.
+
 ## 3. Rekapitulasi
 
 | Status | Jumlah |
@@ -295,6 +344,7 @@ request/response — lihat §4.12 `03-api-contract.md`.
 | 1.3.0 | 1 September 2026 | | Tambah TC-301..TC-314: pembayaran angsuran pinjaman sekuensial tanpa partial payment (keputusan BPR/M-Pay) — `/pinjaman/tagihan` mengembalikan seluruh angsuran belum lunas (bukan satu baris); `/transaksi/angsuranPinjaman` menolak pembayaran sebagian/melompat dan menurunkan `pokok`/`bunga` dari jadwal server-side. Mengikuti `services/JadwalKreditServiceTest$GetTagihanKredit` (5 kasus) & `services/KretransServiceTest$TransKreditAngsuran` (9 kasus). Kasus usang `TransactionAmountValidationTest.angsuranPokokBunga` dihapus (field `pokok`/`bunga` tidak lagi ada pada request DTO). |
 | 1.3.1 | 1 September 2026 | | Tambah TC-401..TC-405: skenario end-to-end registrasi kredit **tanpa** `loanStyleId` (jalur legacy/non-M-Pay) → pencairan → inquiry jadwal → cek tagihan → pembayaran angsuran ke-1, menautkan §4.11.1/§4.14/§4.11.2/§4.11.3/§4.15 sebagai satu naskah uji manual SIT/UAT yang juga menghasilkan data pre-condition yang identik dengan TC-301..TC-314. Tidak menambah unit test baru — murni menyusun urutan skenario bisnis dari test unit yang sudah ada. |
 | 1.4.0 | 11 September 2026 | | Tambah TC-501..TC-504: registrasi deposito produk **On Call** (`kodeProduk=311`, tenor harian 7/14) — `jkw` di luar {7,14} ditolak `95`, dan regresi bug tanggal jatuh tempo (`tglJt` kini `+hari` untuk On Call, sebelumnya selalu `+bulan`). Mengikuti `services/DepositoServiceTest$OnCall` (4 kasus). Tidak ada perubahan kontrak request/response. |
+| 1.6.0 | 22 September 2026 | | Tambah TC-601..TC-605: **validasi saldo pada reversal transaksi tabungan** — regresi atas bug produksi (rekening bersaldo -4.649 akibat reversal transaksi Juli yang diposting Agustus tanpa cek saldo). Mencakup reversal setoran (`D1`) dan leg penerima transfer (`T1`) yang ditolak saat saldo kurang, leg yang dikredit balik yang sengaja tidak dicek, perlakuan fail-closed saat data saldo tidak ditemukan, dan batas `>=`. Mengikuti `services/TabtransReversalSaldoTest` (5 kasus). Termasuk query SQL deteksi rekening bersaldo negatif untuk audit berkala. |
 | 1.5.0 | 11 September 2026 | | **Koreksi TC-501..TC-503** — memo BPR sebenarnya menetapkan suku bunga **per-tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a), bukan `suku_bunga_default` seperti dicatat pada versi 1.4.0; TC-501/TC-502 kini menegaskan suku bunga diresolusi dari master baru `api_dep_oncall_rate`. TC-503 dikoreksi dari "`jkw` di luar {7,14}" (set hardcoded) menjadi "`jkw` tanpa baris `api_dep_oncall_rate` aktif" (juga mencakup kasus periode program berakhir), dengan pesan penolakan baru "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini" — **tanpa fallback** ke default produk. Pre-condition menambahkan patch `patch_dep_oncall_rate.sql` & seeder `seed_dep_oncall_rate.sql`. TC-504 tidak berubah. |
 
 ---

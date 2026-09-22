@@ -51,6 +51,8 @@ data antar-kantor, dan audit trail.
 | CIF | Customer Information File (identitas nasabah / `nasabahId`). |
 | SLA | Service Level Agreement. |
 | SHA1 | Algoritma hashing password `user_web_password` (bersama legacy IBS). |
+| Partner *Channeling* | Fintech pihak ketiga (mis. Akulaku) yang mengirim data nasabah+kredit secara massal untuk diregistrasikan & di-*disburse* lewat H2H. |
+| Batch Job | Satu submit onboarding partner berisi banyak baris, diproses *asynchronous* di background; hasilnya dipantau lewat polling status. |
 
 ### 1.4 Referensi
 - [BRD Host 2 Host](01-brd.md)
@@ -100,6 +102,7 @@ Karakteristik arsitektural penting:
 | Pengguna HQ | Lintas-kantor (bypass tenant guard) | `user_id` ada di `isolation.hq-user-ids`. |
 | Admin Rekap | Akses endpoint `/rekap/**` | `user_id` ada di `rekap.admin-user-ids` (fail-closed). |
 | Operator Monitoring | Akses `/api/monitoring/**` | Via `X-MONITORING-KEY`; dashboard `health-ui-mcs`. |
+| Operator Batch Onboarding | Submit `POST /nasabah/batch-akulaku` | `user_id` ada di `akulaku.batch-operator-user-ids` (fail-closed); satu submit dapat men-disburse dana ke ratusan rekening sekaligus. |
 
 ### 2.4 Batasan & Asumsi
 - Bahasa/platform: **Java 17**, **Spring Boot 3.3.13**, Maven; JWT via `jjwt` 0.11.5 (HS256).
@@ -135,12 +138,13 @@ Karakteristik arsitektural penting:
 | FR-016 | Angsuran pinjaman | Posting angsuran — hanya angsuran belum lunas paling awal, penuh (tanpa partial payment); `pokok`/`bunga` diturunkan sistem dari jadwal, bukan dari client. | Wajib | BR-006..BR-010, BR-023, BR-024 |
 | FR-017 | Setoran deposito | Posting setoran deposito (E1–E3). | Wajib | BR-006..BR-010 |
 | FR-018 | Cek status transaksi | Mengambil status transaksi berdasarkan `kuitansi`. | Tinggi | BR-012 |
-| FR-019 | Reversal transaksi | Membatalkan transaksi dengan guard anti dobel-reversal. | Wajib | BR-011 |
+| FR-019 | Reversal transaksi | Membatalkan transaksi dengan guard anti dobel-reversal **dan validasi saldo pada setiap leg yang mendebet**. | Wajib | BR-011, BR-011a, BR-009, BR-010 |
 | FR-020 | Referensi transaksi | Daftar tipe integrasi & kode binding bank. | Sedang | — |
 | FR-021 | Rekap laporan (HQ/admin) | Rekap setoran & penarikan tabungan per marketing. | Sedang | BR-013 |
 | FR-022 | Monitoring log API | Daftar/detail/ekspor CSV log API, key-gated. | Sedang | BR-014, BR-015 |
 | FR-023 | Idempotency & rate limit | Menegakkan `X-IDEMPOTENCY-KEY` (reservasi atomik) & batas laju. | Wajib | BR-006, BR-007, BR-016 |
 | FR-024 | Tenant isolation | Menegakkan `kode_kantor` pada setiap endpoint tenant-scoped. | Wajib | BR-012 |
+| FR-025 | Batch onboarding partner *channeling* (Akulaku) | Submit kumpulan record nasabah+kredit sebagai job *asynchronous* (`POST /nasabah/batch-akulaku`), dengan polling status (`GET .../{jobId}`) & detail per-baris (`GET .../{jobId}/items`). | Wajib | BR-028..BR-033 |
 
 ### Detail FR-014 (Transaksi Tabungan — money-path)
 - **Pemicu:** `POST /api/v1/transaksi/tabungan` dengan Bearer access token + `X-IDEMPOTENCY-KEY`.
@@ -334,7 +338,95 @@ Karakteristik arsitektural penting:
   `TransService.transReverse`, dengan guard `existsByKuitansiId(kuitansiId + "R")` untuk
   mencegah dobel-reversal; posting reversal derivatif dari `kuitansiId` asli.
 - **Output:** `TransReverseResponseDTO` — `transId`, `kuitansi`, `kuitansi_id`, `tglTrans`, `jamTrans`.
-- **Aturan validasi:** transaksi belum pernah di-reverse; office pemilik == office token.
+- **Aturan validasi:** transaksi belum pernah di-reverse; office pemilik == office token;
+  **saldo mencukupi pada setiap leg yang mendebet** (lihat di bawah).
+- **Validasi saldo reversal (BR-011a, sejak 2026-09-22).** Reversal **menambah baris transaksi
+  berlawanan arah**, bukan menghapus baris asli. Konsekuensinya, reversal atas transaksi yang
+  dulu *mengkredit* rekening akan **mendebet** rekening tersebut — dan antara tanggal transaksi
+  asli dan tanggal reversal, saldo bisa sudah berubah/terpakai. Leg yang mendebet:
+
+  | `tipeTrans` | Leg yang mendebet | Divalidasi |
+  |-------------|-------------------|------------|
+  | `D1`/`D2`/`D3` (reversal setoran) | rekening tujuan setoran | ✅ |
+  | `T1` (reversal transfer) | rekening **penerima** transfer | ✅ |
+  | `T1` leg pengirim, `T2`/`T3`/`T4` | (dikredit balik) | — |
+
+  Aturannya **identik** dengan posting normal: `saldo_akhir - saldo_blokir - minimum >= pokok`
+  (hanya `pokok`; `adm` tidak dihitung karena masuk jurnal GL, bukan saldo rekening).
+  Pemeriksaan dijalankan **sebelum** baris transaksi apa pun ditulis, di dalam pessimistic lock
+  yang sama dengan BR-010, sehingga posting lain tidak dapat menyelinap di antara pemeriksaan
+  dan penulisan. Penentuan leg mana yang mendebet diturunkan dari hasil pemetaan
+  `my_kode_trans` reversal (`2xx` = debet), bukan dari daftar `tipeTrans` tetap, agar pemetaan
+  reversal baru otomatis ikut tercakup.
+- **Perilaku bila saldo tidak cukup:** reversal **ditolak** (`95`, HTTP 400) dengan pesan yang
+  menyebut nominal dibutuhkan, saldo efektif tersedia, dan kekurangannya; tidak ada baris yang
+  ditulis. **Tidak tersedia mekanisme force/override** — pemulihan dana yang sudah terlanjur
+  dipakai nasabah ditangani melalui backoffice/CBS, di luar cakupan API ini.
+
+### Detail FR-025 (Batch Onboarding Partner Channeling — Akulaku, async job)
+- **Latar belakang:** BPR menjalin kerja sama *channeling* dengan Akulaku, yang mengirim data
+  nasabah+kredit secara berkala dalam jumlah besar (ratusan record sekaligus). Klien secara
+  eksplisit menolak API satu-record-per-request, sehingga endpoint ini menerima **array** dan
+  memprosesnya sebagai **job asynchronous**: submit langsung mengembalikan `jobId`, sedangkan
+  pemrosesan sesungguhnya berjalan di background (sekuensial per baris, bukan paralel) dan
+  dipantau lewat polling. Ruang lingkup awal (MVP) dibatasi pada subset record Akulaku yang
+  memiliki data nasabah yang cocok (± 850 nasabah/860 kredit dari total ± 50.000 lebih record
+  pinjaman pada ekspor partner — lihat BR-033).
+- **Pemicu (submit):** `POST /api/v1/nasabah/batch-akulaku` (Bearer access token +
+  `X-IDEMPOTENCY-KEY`).
+- **Input:** `{ kodeKantor, userId, items: [...] }` — satu submit selalu untuk **satu** kantor
+  (tidak ada field kantor per-baris). Setiap baris `items[]` memuat seluruh field nasabah
+  (identik `CreateNasabahRequestDTO`) ditambah field kredit (identik `CreateKreditRequestDTO`)
+  plus dua field identitas partner: `akulakuUserId` (id customer Akulaku, disimpan ke
+  `nasabah.no_alt`) dan `noAlternatif` (referensi pinjaman Akulaku, disimpan ke
+  `kredit.no_alternatif` — juga kunci deduplikasi).
+- **Proses (submit):** validasi token → `userId` body == klaim token (else 403) → **allowlist**
+  `akulaku.batch-operator-user-ids` (else 403) → wajib `X-IDEMPOTENCY-KEY` (else 400) →
+  `reserveIfFirst` (else 409) → rate limit 5/60s (else 429) →
+  `TenantGuard.assertOffice(token, kodeKantor)` → buat baris `api_batch_job` (`status=PENDING`)
+  + satu baris `api_batch_job_item` (`status=PENDING`) per `items[]` (`rowNumber` 1-based) →
+  kembalikan `{ jobId, totalRows }` (HTTP **202 Accepted**) → job diproses secara terpisah di
+  background (di luar thread HTTP yang menjawab request).
+- **Proses (per baris, background):** untuk setiap baris, urut dan berhenti pada kegagalan
+  pertama (isolasi per baris — kegagalan **tidak** menggagalkan baris lain dalam job):
+  1. **Dedup:** `kredit.no_alternatif` == `noAlternatif` baris ini sudah ada? → tandai
+     `SKIPPED_DUPLICATE`, **tidak** memanggil layanan apa pun, lanjut ke baris berikutnya.
+  2. **Validasi manual** (Bean Validation tidak otomatis berjalan di luar controller) atas DTO
+     nasabah & kredit yang dibentuk dari baris ini — gagal → tandai `FAILED` dengan pesan
+     validasi, layanan registrasi/pencairan **tidak** dipanggil.
+  3. **Registrasi nasabah** — alur yang sama persis dengan `POST /nasabah/registrasi` → hasil
+     `nasabahId`.
+  4. **Registrasi kredit** — alur yang sama persis dengan `POST /pinjaman/registrasi`,
+     `typeKredit="100"` (flat) selalu di-*hardcode* — hasil `noRekening`.
+  5. **Pencairan otomatis** — alur yang sama persis dengan `POST /transaksi/pencairanPinjaman`
+     channel `C3` (pencairan dari CoA), langsung men-disburse ke rekening kredit yang baru
+     dibuat, tanpa langkah manual terpisah.
+  6. Kegagalan pada langkah 3/4/5 mana pun → baris ditandai `FAILED` dengan pesan error; baris
+     yang sudah lolos sebagian langkah **tidak** ditandai `SUCCESS`. Seluruh baris memakai
+     satu unit transaksi per baris, sehingga kegagalan di langkah belakangan tidak meninggalkan
+     data nasabah/kredit setengah jadi untuk baris tersebut.
+  7. Baris yang lolos seluruh langkah → `SUCCESS`, dicatat `nasabahId` & `noRekening`.
+  - Setelah seluruh baris selesai diproses (apa pun hasilnya), job dipindahkan ke
+    `status=COMPLETED` dengan `successCount`/`failCount`/`skippedCount` dihitung ulang dari
+    tabel baris — job **selalu** mencapai `COMPLETED`, terlepas dari berapa banyak baris yang
+    gagal/di-skip.
+- **Pemicu (polling status):** `GET /api/v1/nasabah/batch-akulaku/{jobId}` (Bearer access token,
+  read-only). **Output:** `{ jobId, status, totalRows, successCount, failCount, skippedCount,
+  submittedAt, finishedAt }`. `jobId` tidak ditemukan → `BUSINESS_EXCEPTION` (`95`).
+- **Pemicu (polling detail per-baris):** `GET /api/v1/nasabah/batch-akulaku/{jobId}/items?status=`
+  (Bearer access token, read-only, `status` opsional memfilter `PENDING`/`SUCCESS`/`FAILED`/
+  `SKIPPED_DUPLICATE`). **Output:** daftar `{ rowNumber, akulakuUserId, noAlternatif, status,
+  nasabahId, noRekening, errorMessage }` — `errorMessage` hanya terisi untuk baris `FAILED`;
+  `nasabahId`/`noRekening` hanya terisi untuk baris `SUCCESS`. `jobId` tidak ditemukan →
+  `BUSINESS_EXCEPTION` (`95`).
+- **Aturan validasi:** field wajib mengikuti persis aturan `CreateNasabahRequestDTO`/
+  `CreateKreditRequestDTO` yang sudah ada (pesan identik); `akulakuUserId`/`noAlternatif` wajib
+  diisi per baris. Endpoint polling (`GET`) tidak memiliki guard idempotency/rate limit/tenant
+  (read-only, JWT saja).
+- **Catatan cakupan:** *dry-run* (validasi tanpa posting) dan endpoint `retry-failed` (memproses
+  ulang hanya baris `FAILED` tanpa mengirim ulang seluruh payload) **belum diimplementasikan**
+  pada perubahan ini — keduanya *fast-follow* yang dapat ditambahkan tanpa mengubah alur
+  per-baris yang sudah ada.
 
 ## 4. Kebutuhan Non-Fungsional
 
@@ -390,6 +482,7 @@ Alternative/Exception Flow:
 
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
+| 1.6.0 | 22 September 2026 | | **FR-019 diperluas** (BR-011a, temuan bug produksi): reversal transaksi tabungan kini memvalidasi saldo pada setiap leg yang mendebet — reversal setoran (`D1`/`D2`/`D3`) dan leg penerima transfer (`T1`) — dengan aturan identik posting normal (`saldo_akhir - saldo_blokir - minimum >= pokok`), dijalankan sebelum baris apa pun ditulis dan di dalam pessimistic lock yang sama. Saldo tidak cukup → ditolak `95`/HTTP 400, tanpa force/override. Tidak ada perubahan skema request/response. |
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | FR-013 diperluas: registrasi deposito produk *special rate* (`sukuBunga` wajib, `jkw` 6/12) & endpoint daftar produk *special rate*. |
 | 1.1.1 | 17 Juli 2026 | | FR-013: aturan `jkw` produk *special rate* diperluas dari `6/12` menjadi 1/3/6/12 (permintaan BPR). |

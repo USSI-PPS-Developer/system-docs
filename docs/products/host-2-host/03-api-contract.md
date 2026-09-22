@@ -924,6 +924,33 @@ Guard: `assertOffice(kodeKantor)`. Response: `TransSetoranDepositoResponseDTO`.
 
 Reversal dijaga anti dobel-reversal (`existsByKuitansiId(kuitansiId + "R")`).
 
+**Validasi saldo pada reversal tabungan (sejak 2026-09-22).** Reversal bukan pembatalan baris
+transaksi asli, melainkan **posting kompensasi** — baris `tabtrans` baru dengan arah berlawanan.
+Artinya reversal atas transaksi yang dulu *mengkredit* rekening akan **mendebet** rekening
+tersebut, dan saldonya bisa saja sudah terpakai. Setiap leg reversal yang mendebet rekening
+tabungan kini divalidasi dengan aturan **sama persis** dengan posting normal:
+`saldo_akhir - saldo_blokir - minimum >= pokok`.
+
+| `tipeTrans` | Leg yang mendebet saat reversal | Divalidasi |
+|-------------|--------------------------------|------------|
+| `D1` / `D2` / `D3` (reversal setoran) | rekening tujuan setoran | ✅ |
+| `T1` (reversal transfer) | rekening **penerima** transfer (leg lawan) | ✅ |
+| `T1` (reversal transfer) | rekening pengirim (dikredit balik) | — (tidak perlu) |
+| `T2` / `T3` / `T4` (reversal penarikan) | — (dikredit balik) | — (tidak perlu) |
+
+Bila saldo tidak mencukupi, reversal **ditolak** dan tidak ada baris apa pun yang ditulis.
+Tidak tersedia mekanisme force/override: pemulihan dana yang sudah terlanjur dipakai nasabah
+ditangani lewat backoffice/CBS, bukan lewat API ini.
+
+**Error `/reversal` — 400**
+```json
+{
+  "responseCode": "95",
+  "responseData": null,
+  "responseMessage": "Reversal ditolak: saldo rekening 001201000371 tidak mencukupi. Dibutuhkan 500000, saldo efektif tersedia 345351 (kurang 154649)"
+}
+```
+
 **Response `/reversal` — 200 OK**
 ```json
 {
@@ -1027,6 +1054,7 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
+| 1.6.0 | 22 September 2026 | | §4.17 `/reversal` diperluas: tabel leg mana yang mendebet per `tipeTrans`, aturan validasi saldo (identik posting normal), dan contoh respons penolakan `95` "Reversal ditolak: saldo rekening ... tidak mencukupi". Tidak ada perubahan bentuk request/response sukses. |
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | Tambah `GET /deposito/produk-spesial-rate`; registrasi deposito mendukung produk *special rate* (`sukuBunga` wajib, `jkw` 6/12); response code baru `03` (`SPECIAL_RATE_REQUIRED`). |
 | 1.1.1 | 17 Juli 2026 | | Aturan `jkw` produk *special rate* diperluas dari `6/12` menjadi **1/3/6/12** (permintaan BPR). |

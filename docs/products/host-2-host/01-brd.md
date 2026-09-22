@@ -58,6 +58,9 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
   revokasi), logout, ganti password, dan update data pengguna sendiri.
 - **Nasabah**: cek NIK/identitas (termasuk WNA), registrasi, update, portofolio CIF,
   daftar nasabah WNA.
+- **Batch onboarding partner channeling** (mis. Akulaku): submit kumpulan record nasabah+kredit
+  sekaligus sebagai job *asynchronous* (bukan satu-per-satu), dengan polling status job & detail
+  per-baris.
 - **Tabungan**: registrasi rekening, pencarian, inquiry saldo, dan daftar rekening.
 - **Pinjaman/Kredit**: registrasi, jadwal angsuran, tagihan, saldo, dan daftar pinjaman.
 - **Deposito**: registrasi (termasuk produk *special rate* dengan suku bunga kustom dan produk **On Call** bertenor harian), inquiry saldo, dan daftar produk *special rate*.
@@ -107,6 +110,7 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
 | BR-009 | Nominal transaksi harus **> 0** (biaya/adm ≥ 0); nominal negatif/nol ditolak. | Wajib | Validasi DTO `@DecimalMin` + guard `signum()` di service. |
 | BR-010 | Saldo yang di-debit/di-kredit harus **dikunci** agar tidak terjadi lost-update/overdraft. | Wajib | Pessimistic lock; multi-akun dikunci urut `no_rekening` (anti-deadlock). |
 | BR-011 | Reversal transaksi harus dijaga dari **dobel-reversal**. | Wajib | Guard `kuitansi_id + "R"`. |
+| BR-011a | Reversal **tidak boleh membuat saldo rekening nasabah menjadi negatif**. Reversal adalah posting kompensasi, bukan pembatalan baris asli — bila transaksi asli mengkredit rekening, reversal-nya mendebet, dan dana tersebut bisa saja sudah terpakai. | Wajib | Setiap leg reversal yang mendebet divalidasi dengan aturan sama persis dengan posting normal: `saldo_akhir - saldo_blokir - minimum >= pokok`. Tidak cukup → ditolak, tanpa jalur force/override. |
 | BR-012 | Data hanya dapat diakses/diubah oleh **kantor pemiliknya** (`kode_kantor`), kecuali HQ. | Wajib | `TenantGuard` per endpoint; allowlist `isolation.hq-user-ids`. |
 | BR-013 | Endpoint rekap/laporan hanya untuk **HQ/admin**. | Tinggi | Allowlist `rekap.admin-user-ids` (fail-closed bila kosong). |
 | BR-014 | Endpoint monitoring log harus **dilindungi kunci** (bukan anonim). | Tinggi | Header `X-MONITORING-KEY` / query `monitoringKey`; fail-closed. |
@@ -123,6 +127,12 @@ yang stabil, aman, dan terdokumentasi (OpenAPI/Swagger).
 | BR-025 | Deposito **On Call** memakai tenor **harian** (7 atau 14 hari), bukan bulanan seperti produk deposito lainnya, dengan suku bunga **per-tenor** sesuai memo BPR (bukan default produk) — 7 hari = 2,5% p.a, 14 hari = 3% p.a, berlaku 1–30 September 2026. | Wajib | Klasifikasi produk (`dep_produk.kode_jenis`) diturunkan sistem dari master produk berdasarkan `kodeProduk`, **tidak pernah** dari payload; berlaku untuk `kodeProduk=311` ("Deposito On Call"). Suku bunga & tenor yang berlaku diturunkan dari master campaign `api_dep_oncall_rate` (per `kodeProduk`+`jkw`+periode), **bukan** `dep_produk.suku_bunga_default` — satu baris `dep_produk` tidak dapat menyimpan dua suku bunga berbeda untuk tenor yang berbeda. |
 | BR-026 | Registrasi deposito On Call yang tidak punya baris campaign aktif untuk `jkw` yang diminta (tenor tidak pernah ditawarkan, atau periode program sudah berakhir) harus **ditolak**, bukan jatuh ke default produk. | Wajib | `api_dep_oncall_rate` **tidak punya fallback** ke `dep_produk.suku_bunga_default` (berbeda dengan campaign saldo minimum tabungan yang punya fallback ke default produk) — nilai default bukan suku bunga program ini, sehingga fallback berisiko mengenakan bunga yang salah. |
 | BR-027 | Ruang lingkup API untuk deposito On Call **hanya** mencakup pembuatan rekening dengan `suku_bunga` & `tgl_jt` yang benar. Akrual bunga harian dan perlakuan ARO/rollover saat jatuh tempo adalah tanggung jawab **backoffice CBS**, di luar cakupan layanan ini. | Wajib | Ketentuan memo #3 (tanpa cash back), #5 (segmen retail/korporasi), #6 (hanya dana baru/*fresh fund*) bersifat prosedural/teller side — **tidak ada enforcement di level API**, karena tidak ada field pada endpoint ini yang dapat memvalidasinya. |
+| BR-028 | Sistem harus mendukung onboarding nasabah+kredit dari partner *channeling* (mis. Akulaku) secara **batch** (banyak record dalam satu submit), bukan satu record per request. | Wajib | Permintaan eksplisit klien — API satu-record-per-request ditolak. Diproses sebagai job *asynchronous*: submit mengembalikan `jobId` segera, hasil dicek lewat polling status. |
+| BR-029 | Setiap baris dalam batch harus memakai alur registrasi & pencairan yang **sama persis** dengan endpoint interaktif yang sudah ada (registrasi nasabah, registrasi kredit, pencairan pinjaman) — bukan logic posting baru. | Wajib | Kredit partner *channeling* ini selalu bertipe **flat** (`typeKredit=100`, tetap/*hardcoded*) dan langsung di-*disburse* otomatis (setara channel `C3`) tanpa langkah pencairan manual terpisah. |
+| BR-030 | Kegagalan pemrosesan satu baris dalam batch **tidak boleh** menggagalkan baris lain dalam batch yang sama. | Wajib | Isolasi per-baris; job tetap berstatus `COMPLETED` walau sebagian baris gagal, dengan penghitung sukses/gagal/skip yang akurat dihitung ulang dari data per-baris. |
+| BR-031 | Baris batch yang referensi pinjamannya **sudah pernah diproses** harus dapat dikirim ulang (resubmit) dengan aman tanpa memproses ulang baris tersebut. | Wajib | Deduplikasi berbasis referensi pinjaman partner (`kredit.no_alternatif`) — baris yang sudah pernah berhasil diregistrasi otomatis dilewati (tidak ada layanan registrasi/pencairan yang dipanggil ulang), sehingga batch yang sama boleh dikirim ulang setelah sebagian baris diperbaiki. |
+| BR-032 | Pengiriman batch onboarding hanya boleh dilakukan oleh **operator/proses yang berwenang**, bukan sembarang pengguna terautentikasi. | Wajib | Allowlist `akulaku.batch-operator-user-ids` (fail-closed bila kosong) — satu submit dapat men-disburse dana sungguhan ke ratusan rekening sekaligus. |
+| BR-033 | Ruang lingkup awal (MVP) batch onboarding Akulaku dibatasi pada subset record pinjaman yang memiliki **data nasabah yang cocok** pada ekspor data partner. | Wajib | Keputusan bisnis BPR: ± 850 nasabah / 860 kredit yang datanya cocok, dari total ± 50.000 lebih record pinjaman pada ekspor Akulaku (± 98% di antaranya tidak punya data nasabah yang cocok — masalah kualitas data di sisi partner, bukan sesuatu yang dapat diperbaiki API ini). Sisanya di luar cakupan hingga ekspor data partner diperbaiki. |
 
 ## 6. Proses Bisnis
 
@@ -189,6 +199,8 @@ uang.
 | RB-011 | Nasabah/kanal mencoba membayar sebagian atau melompati angsuran yang tertunggak | Rekonsiliasi jadwal kacau, saldo pinjaman tidak sinkron dengan jadwal | Server menolak (`95`) pembayaran selain angsuran belum lunas paling awal; nominal yang diposting selalu diturunkan dari jadwal, bukan dari client (BR-023, BR-024). |
 | RB-012 | Satuan tenor produk deposito (bulan vs hari) tidak dibedakan saat menghitung tanggal jatuh tempo, berisiko pada produk bertenor harian seperti On Call | Tanggal jatuh tempo salah (mis. tercatat bulan alih-alih hari), berdampak pada pencairan/perlakuan bunga | Perhitungan tanggal jatuh tempo kini bercabang menurut klasifikasi produk (`dep_produk.kode_jenis`): `+hari` untuk On Call, `+bulan` untuk produk lain; ditemukan & diperbaiki sebelum produk On Call pernah dipakai di produksi (belum ada nasabah yang terdampak). |
 | RB-013 | Registrasi On Call memakai suku bunga default produk alih-alih suku bunga per-tenor sesuai memo BPR (kesalahan asumsi desain awal, dikoreksi sebelum implementasi final) | Nasabah dikenakan/dijanjikan bunga yang salah (2,5%/3% p.a keliru tercatat sebagai `suku_bunga_default` produk) | Suku bunga kini diturunkan dari master `api_dep_oncall_rate` per `(kodeProduk, jkw, tanggal)`, bukan `dep_produk.suku_bunga_default`; tanpa baris campaign aktif yang cocok, registrasi **ditolak** (tidak ada fallback) — lihat BR-025/BR-026. Dikoreksi sebelum produk ini pernah dipakai di produksi. |
+| RB-014 | Batch yang sama dikirim ulang (mis. setelah memperbaiki sebagian baris gagal) memproses ulang baris yang sudah pernah berhasil, menyebabkan dobel-registrasi nasabah/kredit dan dobel-pencairan dana | Kerugian finansial, data nasabah/kredit ganda | Dedup berbasis `kredit.no_alternatif` sebelum baris diproses — baris yang referensi pinjamannya sudah tercatat otomatis di-skip (tidak ada layanan registrasi/pencairan yang dipanggil); baris yang sebelumnya gagal (belum sempat membuat baris kredit) tetap dapat diproses ulang setelah datanya diperbaiki (BR-031). |
+| RB-015 | Submit batch onboarding tanpa kontrol otorisasi dapat men-disburse dana ke banyak rekening sekaligus oleh pengguna yang tidak berwenang | Kerugian finansial berskala batch (ratusan rekening dalam satu submit) | Allowlist `akulaku.batch-operator-user-ids` (fail-closed bila kosong) ditambah rantai guard standar (kepemilikan `userId`, idempotency, rate limit, isolasi kantor via `TenantGuard`) — BR-032. |
 
 ## 9. Kriteria Penerimaan (Acceptance Criteria)
 
@@ -200,6 +212,8 @@ uang.
   (tidak ada lost-update), dan transfer A→B / B→A konkuren tidak deadlock.
 - Pengguna non-HQ tidak dapat membaca/menulis data kantor lain (403, `USER_MISMATCH`).
 - Nominal ≤ 0 ditolak; reversal kedua atas transaksi yang sama ditolak.
+- Reversal setoran / reversal sisi penerima transfer yang saldonya sudah tidak mencukupi
+  ditolak, dan **tidak ada** rekening yang berakhir dengan saldo negatif.
 - Kegagalan Redis mengembalikan HTTP 503 dan tidak ada posting uang yang terjadi.
 - Log `api_log` tidak memuat nilai password/token dalam bentuk plaintext.
 - Seluruh endpoint tampil & dapat dicoba melalui Swagger UI.
@@ -225,6 +239,16 @@ uang.
   sebagai tanggal registrasi + jumlah **hari** (bukan bulan) untuk produk ini.
 - Akrual bunga harian dan proses ARO/rollover saat jatuh tempo deposito On Call **tidak**
   dilakukan oleh API ini — tetap menjadi proses backoffice CBS.
+- Submit batch onboarding partner (Akulaku) mengembalikan `jobId` **segera** (tanpa menunggu
+  seluruh baris selesai diproses); status job berkembang `PENDING` → `PROCESSING` → `COMPLETED`
+  dan dapat dipantau lewat polling.
+- Baris batch dengan referensi pinjaman (`noAlternatif`) yang sudah pernah diproses **dilewati**
+  (ditandai `SKIPPED_DUPLICATE`) tanpa memanggil layanan registrasi/pencairan apa pun — batch
+  yang sama aman dikirim ulang.
+- Kegagalan pada satu baris batch (validasi maupun aturan bisnis) **tidak** menggagalkan baris
+  lain; job tetap mencapai status `COMPLETED` dengan jumlah sukses/gagal/skip yang akurat.
+- Pengguna di luar allowlist `akulaku.batch-operator-user-ids` ditolak (403) saat mencoba submit
+  batch; allowlist kosong = semua ditolak.
 
 ---
 
@@ -232,12 +256,14 @@ uang.
 
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
+| 1.6.0 | 22 September 2026 | | **BR-011a baru** (temuan bug produksi): reversal tidak boleh membuat saldo rekening nasabah negatif. Reversal adalah posting kompensasi, bukan pembatalan baris asli — reversal atas transaksi yang dulu mengkredit rekening akan mendebetnya, dan dana itu bisa sudah terpakai. Setiap leg reversal yang mendebet kini divalidasi dengan aturan sama persis dengan posting normal; tidak cukup → ditolak, tanpa jalur force/override (keputusan BPR). Kriteria penerimaan terkait ditambahkan. |
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | Ruang lingkup deposito diperluas: produk *special rate* (suku bunga kustom) & daftar produknya. |
 | 1.2.0 | 5 Agustus 2026 | | Nama database dibuat generik: `cma`/`cma_sys` → **`dbcore`/`dbcore_sys`** (nama skema spesifik lembaga tidak dipakai di dokumen yang di-deliver ke klien). Campaign **bebas saldo minimum** tabungan (permintaan BPR Sentosa): BR-019..BR-022 (campaign sebagai master data yang disetujui, nilai tidak dari payload, jejak audit wajib, allowlist pengganti maker-checker), risiko RB-009/RB-010, dan kriteria penerimaan terkait. |
 | 1.3.0 | 1 September 2026 | | BR-023/BR-024 baru (keputusan BPR/M-Pay): pembayaran angsuran pinjaman tidak boleh sebagian (partial payment) dan hanya angsuran belum lunas paling awal yang boleh dibayar (tidak boleh melompat). RB-011 baru & kriteria penerimaan terkait ditambahkan. |
 | 1.4.0 | 11 September 2026 | | BR-025 baru — produk deposito **On Call** (`kodeProduk=311`) bertenor harian (7/14 hari) memakai suku bunga default produk, bukan suku bunga kustom. RB-012 baru mencatat mitigasi bug tanggal jatuh tempo (perhitungan kini membedakan satuan hari vs bulan menurut klasifikasi produk), ditemukan & diperbaiki sebelum produk ini pernah dipakai di produksi. Kriteria penerimaan terkait ditambahkan. |
 | 1.5.0 | 11 September 2026 | | **Koreksi BR-025** — memo BPR asli "Program Deposito On Call" ternyata menetapkan suku bunga **berbeda per tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 September 2026), bukan suku bunga default produk seperti diasumsikan pada versi 1.4.0. BR-026 baru (registrasi ditolak tanpa fallback bila tidak ada campaign aktif yang cocok) dan BR-027 baru (cakupan API hanya pembuatan rekening — akrual bunga & ARO/rollover adalah tanggung jawab backoffice CBS; ketentuan memo #3/#5/#6 tidak di-enforce di level API). RB-013 baru mencatat koreksi asumsi desain ini (ditemukan & dikoreksi sebelum produk dipakai di produksi). Kriteria penerimaan terkait dikoreksi. |
+| 1.6.0 | 19 September 2026 | | **Kapabilitas bisnis baru — batch onboarding partner *channeling* (Akulaku), job asynchronous.** BPR menjalin kerja sama *channeling* dengan Akulaku, yang mengirim data nasabah+kredit secara massal (ratusan record sekaligus); klien secara eksplisit menolak API satu-record-per-request. BR-028..BR-033 baru: dukungan submit batch sebagai job async (BR-028), setiap baris memakai alur registrasi/pencairan yang sudah ada tanpa logic posting baru — kredit selalu flat & auto-disburse (BR-029), isolasi kegagalan per-baris (BR-030), deduplikasi aman untuk resubmit berbasis referensi pinjaman partner (BR-031), allowlist operator (BR-032), dan **keputusan ruang lingkup MVP**: hanya ± 850 nasabah/860 kredit yang datanya cocok pada ekspor Akulaku (dari ± 50.000 lebih total record pinjaman, ± 98% tanpa data nasabah yang cocok — masalah kualitas data di sisi partner) yang diproses; sisanya menunggu perbaikan ekspor data partner (BR-033). Ruang lingkup §3 diperluas. RB-014 (risiko dobel-proses saat resubmit) dan RB-015 (risiko disbursement massal tanpa otorisasi) baru. Kriteria penerimaan terkait ditambahkan. |
 
 ---
 
