@@ -73,6 +73,12 @@
 | TC-603 | Transaksi — reversal tabungan | Reversal transfer (`T1`): leg penerima yang saldonya kurang ditolak; leg pengirim (dikredit balik) tidak ikut dicek | Kritis | Negatif |
 | TC-604 | Transaksi — reversal tabungan | Rekening tanpa data saldo diperlakukan saldo 0 (fail-closed), bukan lolos | Tinggi | Negatif |
 | TC-605 | Transaksi — reversal tabungan | Saldo efektif tepat sama dengan pokok tetap diterima (batas `>=`) | Sedang | Positif |
+| TC-701 | Transaksi tabungan — jurnal antar kantor | Pusat → rekening cabang: 2 head jurnal dengan perkiraan RAK yang benar (regresi arah yang sudah benar) | Kritis | Positif |
+| TC-702 | Transaksi tabungan — jurnal antar kantor | Cabang → rekening pusat: 2 head jurnal (bukan 3) dan seluruh `KODE_PERK` terisi | Kritis | Positif |
+| TC-703 | Transaksi tabungan — jurnal antar kantor | Cabang → rekening cabang lain: 3 head jurnal, pusat sebagai perantara | Tinggi | Positif |
+| TC-704 | Transaksi tabungan — jurnal antar kantor | Transaksi dalam satu kantor: tetap 1 head jurnal, tanpa perkiraan RAK | Tinggi | Positif |
+| TC-705 | Transaksi tabungan — jurnal antar kantor | RAK kantor belum diatur di `app_kode_kantor_atk` ditolak `95` (fail-closed), bukan jurnal berkode perkiraan kosong | Tinggi | Negatif |
+| TC-706 | Transaksi tabungan — jurnal antar kantor | `ATK_SETTING_KODE_KANTOR_PUSAT` kosong ditolak `95` | Sedang | Negatif |
 
 ---
 
@@ -320,6 +326,47 @@ Setelah perbaikan ini, query di atas **tidak boleh** menghasilkan baris baru. Ba
 ada sebelum perbaikan (termasuk `001201000371`) **tidak** dikoreksi otomatis — koreksinya adalah
 keputusan/jurnal penyesuaian terpisah di sisi BPR.
 
+### TC-701..TC-706 — Jurnal antar kantor (ATK) pada transaksi tabungan
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | Transaksi tabungan — pembentukan jurnal antar kantor (FR-014, BR-034..BR-036) |
+| Prioritas | **Kritis** (jalur uang / akuntansi) |
+| Pre-condition | Tidak ada patch DB yang perlu dijalankan. `sys_mysysid.ATK_SETTING_KODE_KANTOR_PUSAT = '001'`. `app_kode_kantor_atk` berisi baris untuk `001` (`KODE_PERK_RAK=11101`, `KODE_PERK_RAK_PASIVA=20801`) dan `002` (`KODE_PERK_RAK=11102`). Rekening tabungan uji `001201000013` milik kantor `001`, perkiraan tabungannya `202010101`; akun integrasi `D3` = `1121013` (RRA MOBILE PAYMENT). Header standar (`Authorization`, `X-IDEMPOTENCY-KEY`) terpenuhi. |
+| Test Data | `POST /api/v1/transaksi/tabungan` `tipeTrans=D3`, `nominal=1000`, `adm=0`; `kodeKantor` mengikuti kantor token yang dipakai tiap langkah. |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 (TC-701) | Token kantor **pusat** `001`, transaksi ke rekening milik cabang `002` | **2** head `transaksi_master` (`001` dan `002`). Buku `001`: `D 1121013` / `K 11102`. Buku `002`: `D 20801` / `K 202010101`. Regresi arah yang sudah benar sebelum perbaikan | | ⬜ Belum |
+| 2 (TC-702) | Token kantor **cabang** `002`, transaksi ke rekening milik pusat `001` | **2** head `transaksi_master` (`002` dan `001`) — **bukan 3**. Buku `002`: `D 1121013` / `K 20801`. Buku `001`: `D 11102` / `K 202010101`. Seluruh `transaksi_detail.KODE_PERK` **terisi** | | ⬜ Belum |
+| 3 (TC-703) | Token kantor cabang `002`, transaksi ke rekening milik cabang lain `003` | **3** head `transaksi_master` (`002`, `003`, `001`) — pusat sebagai perantara. Buku `002`: `D 1121013` / `K 20801`; buku `003`: `D 20801` / `K <perk tabungan>`; buku `001`: `D 11102` / `K 11103` | | ⬜ Belum |
+| 4 (TC-704) | Token kantor `001`, transaksi ke rekening milik kantor `001` (satu kantor) | **1** head `transaksi_master` (`001`): `D 1121013` / `K 202010101`. Tidak ada perkiraan RAK yang dipakai | | ⬜ Belum |
+| 5 (TC-705) | Hapus/kosongkan `KODE_PERK_RAK_PASIVA` kantor pusat, ulangi TC-702 | HTTP 400 `95`, pesan "Perkiraan antar kantor pasiva belum diatur untuk kantor 001". **Tidak ada** jurnal tersimpan (fail-closed, BR-036) | | ⬜ Belum |
+| 6 (TC-706) | Kosongkan `sys_mysysid.ATK_SETTING_KODE_KANTOR_PUSAT`, ulangi TC-702 | HTTP 400 `95`, pesan menyebut `ATK_SETTING_KODE_KANTOR_PUSAT` belum diatur. **Tidak ada** jurnal tersimpan | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Mengikuti `services/TabtransAtkJournalTest` (6 kasus) di repo `microservice-core`
+— suite bertambah dari 198 menjadi 204 kasus. **Regresi atas bug yang ditemukan saat pengujian
+22 September 2026:** transaksi dari cabang ke rekening pusat (TC-702) membentuk **3** head jurnal,
+dua di antaranya kembar, dan **seluruh** baris `transaksi_detail`-nya tersimpan dengan `KODE_PERK`
+kosong — sementara arah sebaliknya (TC-701) sudah benar. Penyebabnya: jalur jurnal antar kantor
+punya pemetaan perkiraan tersendiri yang tidak memetakan tipe `D3` (juga `D1`/`T4`) pada sisi
+kantor non-pusat, dan jurnal kantor pusat dibuat tanpa syarat. TC-701 dan TC-704 sengaja
+dipertahankan sebagai pagar agar jalur yang sudah benar tidak ikut berubah. Tidak ada perubahan
+skema request/response.
+
+**Query verifikasi jurnal (ganti `<TRANS_ID_SOURCE>` dengan `transId` pada response):**
+```sql
+SELECT tm.kode_kantor, td.KODE_PERK, p.NAMA_PERK, td.DEBET, td.KREDI, td.kode_kantor_detail
+FROM transaksi_master tm
+JOIN transaksi_detail td ON td.MASTER_ID = tm.trans_id
+LEFT JOIN perkiraan p ON p.kode_perk = td.KODE_PERK
+WHERE tm.TRANS_ID_SOURCE = <TRANS_ID_SOURCE>
+ORDER BY tm.trans_id, td.trans_id;
+```
+Setiap baris wajib punya `KODE_PERK` terisi, dan total `DEBET` = total `KREDI` per head jurnal.
+
+
 ## 3. Rekapitulasi
 
 | Status | Jumlah |
@@ -335,6 +382,7 @@ keputusan/jurnal penyesuaian terpisah di sisi BPR.
 
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
+| 1.7.0 | 22 September 2026 | | Tambah TC-701..TC-706: **pembentukan jurnal antar kantor (ATK) pada transaksi tabungan** — regresi atas bug yang ditemukan saat pengujian (transaksi dari cabang ke rekening pusat membentuk 3 head jurnal, dua kembar, dengan `KODE_PERK` kosong di semua barisnya). Mencakup arah pusat→cabang yang sudah benar (pagar regresi), arah cabang→pusat yang diperbaiki, cabang→cabang lain yang tetap lewat pusat, transaksi satu kantor, serta penolakan fail-closed saat RAK/setting kantor pusat belum diatur. Mengikuti `services/TabtransAtkJournalTest` (6 kasus). Termasuk query verifikasi keseimbangan jurnal per head. |
 | 1.0.0 | 23 Juni 2026 | | Dokumen dibuat |
 | 1.1.0 | 5 Agustus 2026 | | Tambah TC-101..TC-108: campaign bebas saldo minimum tabungan (registrasi & update rekening existing, jejak audit, allowlist, office scope, guard header). |
 | 1.2.0 | 25 Agustus 2026 | | Tambah TC-201..TC-211: registrasi kredit via *loan style* M-Pay (CR BPR) — happy path derive `typeKredit`/`jmlPinjaman`/`jmlAngsuran` + snapshot provisi/adm/denda, loan style tidak ditemukan/nonaktif/beda produk/tenor tidak valid, dan alur registrasi lama (tanpa `loanStyleId`) tidak berubah + validasi field wajibnya. Mengikuti `services/KreditServiceTest` (11 kasus). |

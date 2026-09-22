@@ -162,6 +162,35 @@ Karakteristik arsitektural penting:
 - **Aturan validasi:** nominal harus > 0 dan `adm` ≥ 0 (DTO `@DecimalMin` + guard `signum()`);
   tipe transaksi harus sesuai pola; kantor pada body harus == office token.
 
+#### Jurnal antar kantor (ATK) pada FR-014
+Sebuah posting tabungan menjadi **antar kantor** bila kantor pemilik salah satu kaki transaksi
+berbeda dari `kodeKantor` pada request (untuk `D2`/`T4` yang "jauh" adalah akun **debet**, untuk
+`T1`/`T2`/`D1`/`D3` akun **kredit**; `T3` tidak pernah antar kantor). Jurnalnya dibentuk seragam
+untuk semua tipe transaksi:
+
+| Buku kantor | Debet | Kredit |
+|-------------|-------|--------|
+| Kantor pemilik kaki debet | perkiraan debet riil (sama dengan jalur satu kantor) | RAK ke kantor lawan |
+| Kantor pemilik kaki kredit | RAK ke kantor lawan | perkiraan kredit riil (sama dengan jalur satu kantor) |
+| Kantor pusat — **hanya bila kedua kantor bukan pusat** | RAK aktiva kantor pemilik kaki debet | RAK aktiva kantor pemilik kaki kredit |
+
+- **Pemilihan RAK** tergantung buku siapa: di **buku kantor pusat** dipakai **RAK aktiva milik
+  kantor lawan** (`app_kode_kantor_atk.KODE_PERK_RAK`), di **buku cabang** selalu **RAK pasiva
+  kantor pusat** (`KODE_PERK_RAK_PASIVA` milik kantor pusat). Cabang tidak pernah memiliki RAK
+  langsung ke cabang lain — karena itu jurnal pusat pada baris ketiga hanya dibuat bila kedua
+  kantor bukan pusat (BR-035).
+- **Contoh `D3`** (setoran dari akun GL `1121013` ke rekening tabungan `202010101`):
+  pusat `001` → rekening cabang `002` menghasilkan buku 001 `D 1121013 / K 11102` dan buku 002
+  `D 20801 / K 202010101`; cabang `002` → rekening pusat `001` menghasilkan buku 002
+  `D 1121013 / K 20801` dan buku 001 `D 11102 / K 202010101`. Perkiraan RAK-nya sama di kedua
+  arah, hanya sisi debet/kreditnya bertukar.
+- **Fail-closed (BR-036):** baris jurnal dengan kode perkiraan kosong/null ditolak; begitu pula
+  bila setting kode kantor pusat (`ATK_SETTING_KODE_KANTOR_PUSAT`) belum diisi atau kantor terkait
+  belum punya baris RAK di `app_kode_kantor_atk`. Semua ditolak sebagai `BusinessException`
+  (`95` / HTTP 400) sebelum jurnal terbentuk, bukan tersimpan diam-diam.
+- **Kontrak request/response FR-014 tidak berubah** oleh aturan ini — pembentukan jurnal
+  sepenuhnya diturunkan sistem dari kantor pemilik rekening.
+
 ### Detail FR-001 (Login)
 - **Pemicu:** `POST /api/v1/autentikasi/login` dengan header `X-CLIENT-ID` & `X-IDEMPOTENCY-KEY`.
 - **Input:** `LoginRequestDTO` — `userName`, `password` (SHA1 dari sisi klien).
@@ -483,6 +512,7 @@ Alternative/Exception Flow:
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.6.0 | 22 September 2026 | | **FR-019 diperluas** (BR-011a, temuan bug produksi): reversal transaksi tabungan kini memvalidasi saldo pada setiap leg yang mendebet — reversal setoran (`D1`/`D2`/`D3`) dan leg penerima transfer (`T1`) — dengan aturan identik posting normal (`saldo_akhir - saldo_blokir - minimum >= pokok`), dijalankan sebelum baris apa pun ditulis dan di dalam pessimistic lock yang sama. Saldo tidak cukup → ditolak `95`/HTTP 400, tanpa force/override. Tidak ada perubahan skema request/response. |
+| 1.7.0 | 22 September 2026 | | **Detail FR-014 diperluas — sub-bagian "Jurnal antar kantor (ATK)" baru** (BR-034..BR-036, temuan bug saat pengujian): bentuk jurnal ATK dibakukan (buku kantor pemilik tiap kaki dihubungkan RAK; RAK aktiva kantor lawan di buku pusat vs RAK pasiva pusat di buku cabang), jurnal kantor pusat sebagai perantara **hanya** bila kedua kantor bukan pusat — sebelumnya transaksi dari cabang ke rekening pusat membentuk 3 head jurnal dengan kode perkiraan kosong. Fail-closed baru: baris jurnal tanpa kode perkiraan, setting kantor pusat kosong, dan RAK yang belum didaftarkan ditolak. Kontrak request/response FR-014 tidak berubah. |
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat |
 | 1.1.0 | 16 Juli 2026 | | FR-013 diperluas: registrasi deposito produk *special rate* (`sukuBunga` wajib, `jkw` 6/12) & endpoint daftar produk *special rate*. |
 | 1.1.1 | 17 Juli 2026 | | FR-013: aturan `jkw` produk *special rate* diperluas dari `6/12` menjadi 1/3/6/12 (permintaan BPR). |
