@@ -110,20 +110,23 @@ didekripsi di klien. Distribusi via **EAS Build** (APK internal).
 | BR-004 | Petugas **wajib membuka kas** sebelum bertransaksi. | Wajib | Dikunci per tanggal; tanpa buka kas, menu transaksi tidak dapat diakses. |
 | BR-005 | Sistem mencatat **buku kas berjalan** tiap transaksi. | Wajib | Tabel `SaldoKas` bersifat *append-only*. |
 | BR-006 | **Tutup kas ditolak** bila masih ada transaksi belum tersinkron. | Wajib | Mencegah selisih kas & kehilangan data transaksi. |
+| BR-006a | Setelah tutup kas, petugas **logout otomatis** dan **tidak dapat login kembali** pada hari yang sama. | Wajib | Kas yang sudah ditutup tidak boleh dibuka/dipakai bertransaksi lagi hingga hari berikutnya. Kunci berlaku per perangkat. |
+| BR-006b | **Admin lembaga dapat membuka ulang kas** yang sudah ditutup dari dashboard, disertai alasan. | Tinggi | Status buka/tutup kas tiap perangkat dilaporkan ke API pusat & terlihat di dashboard; buka ulang tercatat (siapa, kapan, alasan). Petugas wajib buka kas lagi. |
 | BR-007 | Petugas dapat melayani **setoran tabungan secara offline**. | Wajib | Uang masuk ke petugas — aman ditulis lokal dulu. |
-| BR-008 | **Penarikan wajib divalidasi server** sebelum uang diserahkan. | Wajib | Uang keluar & saldo nasabah harus dipastikan mencukupi. |
+| BR-008 | **Penarikan wajib divalidasi server** sebelum uang diserahkan. | Wajib | Uang keluar & **saldo efektif** nasabah harus mencukupi: saldo Core + transaksi branchless yang belum diposting − (saldo minimum + saldo blokir). |
 | BR-009 | Penarikan dapat memerlukan **OTP nasabah** dan/atau **otorisasi supervisor**. | Tinggi | `POST /transaksi/otp-request`, `/transaksi/otorisasi-request`. |
 | BR-010 | Petugas dapat melayani **angsuran kredit**. | Wajib | Alur serupa setoran. |
 | BR-011 | Petugas dapat melakukan **reversal** transaksi keliru. | Tinggi | Ditandai `isReversal`, bukan dihapus — jejak audit terjaga. |
 | BR-012 | Petugas dapat **mencari nasabah tanpa koneksi**. | Wajib | Dari berkas SQLite master yang diunduh. |
 | BR-013 | Pencarian nasabah **dibatasi wilayah kerja petugas**. | Wajib | Filter `kode_group1..3` & `kode_kantor` dari profil login. |
-| BR-014 | Transaksi tertunda **tersinkron otomatis** saat online. | Wajib | Interval 10 detik + deteksi konektivitas. |
+| BR-014 | Transaksi tertunda **tersinkron otomatis** saat online. | Wajib | Interval 10 detik sejak aplikasi dibuka + deteksi konektivitas; berjalan senyap tanpa dialog agar tidak mengganggu petugas. |
 | BR-015 | Nasabah menerima **struk tercetak** sebagai bukti sah. | Wajib | ESC/POS Bluetooth; nomor rekening di-*mask*. |
 | BR-016 | Tersedia **jalur cetak cadangan** bila modul printer gagal. | Sedang | Deep link ke aplikasi RawBT. |
 | BR-017 | Tersedia **laporan rekap harian & log aktivitas**. | Tinggi | Untuk rekonsiliasi dan audit. |
 | BR-018 | **Lokasi petugas** terpantau selama bertugas. | Sedang | `POST /devices/user/location` tiap 60 detik. |
 | BR-019 | **Identitas perangkat** dikirim tiap permintaan. | Wajib | Header `X-Device-Id`, `X-Device-Name` (kendali perangkat). |
 | BR-020 | Data sensitif di perangkat **tidak tersimpan polos**. | Wajib | Kolom transaksi & nasabah di-*encode* sebelum disimpan. |
+| BR-021 | Perangkat **baru dapat dipakai setelah disetujui** Admin USSI. | Wajib | Registrasi/penghapusan device oleh lembaga berstatus pending sampai disetujui (dasar tagihan bulanan per device). Aplikasi menampilkan pesan khusus untuk device menunggu persetujuan / ditolak / nonaktif. |
 
 ## 6. Proses Bisnis
 
@@ -241,6 +244,10 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
   berfungsi sebagai cadangan.
 - **Tutup kas ditolak** selama masih ada transaksi belum tersinkron, dan berhasil
   (diikuti logout) ketika seluruh transaksi bersih.
+- Setelah tutup kas, **login (biasa maupun biometrik) ditolak** pada perangkat tersebut
+  hingga pergantian tanggal, **kecuali** admin lembaga membuka ulang kas dari dashboard —
+  setelah itu petugas dapat login dan wajib membuka kas lagi.
+- Device yang **belum disetujui / ditolak** tidak dapat login, dengan pesan yang menjelaskan statusnya.
 - **Rekap harian & log aktivitas** menampilkan seluruh transaksi hari itu untuk rekonsiliasi.
 
 ---
@@ -250,6 +257,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 31 Juli 2026 | | Dokumen dibuat berdasarkan implementasi repo `Mobile-Branchless` (React Native/Expo SDK 54). |
+| 1.0.1 | 6 Oktober 2026 | | Tambah BR-006a (kunci login setelah tutup kas), BR-006b (buka ulang kas dari dashboard), BR-021 (approval device); BR-008 saldo efektif; BR-014 sync senyap. |
 
 ---
 

@@ -190,6 +190,10 @@ Siang  : melayani transaksi (sinkronisasi berjalan sendiri saat ada sinyal)
 Sore   : pastikan tab Sync bersih ─► Tutup Kas ─► logout otomatis
 ```
 
+> Setelah tutup kas, perangkat **tidak dapat login lagi hari itu**. Bila petugas perlu
+> bertransaksi lagi, admin lembaga membuka ulang kas dari dashboard (Manajemen Device →
+> Kas Hari Ini → Buka ulang kas); petugas lalu login dan membuka kas kembali.
+
 > **DB master bernama per tanggal** (`dbbranchless_YYMMDD.db`). Berkas kemarin tidak dipakai
 > hari ini — unduh ulang setiap pagi adalah bagian dari prosedur operasional, bukan opsional.
 
@@ -201,7 +205,7 @@ berikut harus sudah siap dan dikelola tim backend:
 
 | Layanan | Tanggung jawab | Dipakai untuk |
 |---------|----------------|---------------|
-| **API Pusat** (`DEFAULT_API`) | Tim USSI | Lookup lembaga, OTP, otorisasi, lapor lokasi petugas |
+| **API Pusat** (`DEFAULT_API`) | Tim USSI | Lookup lembaga, OTP, otorisasi, lapor lokasi petugas, status kas harian, approval device |
 | **API Lembaga** (`api_url`) | Tim USSI / lembaga | Login, sinkronisasi transaksi, penarikan, mutasi |
 | **Pembangkit DB master** | Sisi server lembaga | Menyediakan `dbbranchless_YYMMDD.db` untuk `GET /db/download/{YYMMDD}` |
 
@@ -217,6 +221,13 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 - [ ] Skema enkripsi (`keyVersion` / AES) & hashing di server **identik** dengan aplikasi.
 - [ ] Akun petugas terdaftar dengan `kode_group1..3` & `unit_kerja` yang benar — nilai ini
       menentukan nasabah mana yang terlihat oleh petugas.
+- [ ] Migration API pusat (`backend-branchless`) **V3, V4, V5** sudah dijalankan manual
+      **sebelum** backend baru di-deploy (Flyway tidak terpasang). Tanpa V4 (`devices.approval_status`)
+      cek device saat login gagal untuk **semua** petugas.
+- [ ] Device petugas berstatus **APPROVED** di dashboard (Manajemen Device / Approval Device).
+- [ ] `api_url` lembaga memakai **`https://`** — domain API lembaga dapat memblokir akses
+      `http://` (403 dari WAF). Setelah `api_url` diubah, petugas wajib **simpan ulang kode
+      lembaga** di tiap perangkat agar SecureStore memuat URL baru.
 
 > **Catatan riwayat:** hingga versi 1.0.0 repo ini menyertakan folder `backend/` berisi
 > layanan Express pendamping untuk membangkitkan berkas SQLite master dari MySQL. Folder
@@ -249,6 +260,9 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
   memasang versi yang mengubah skema `Transaksi`.**
 - **OTA**: `expo-updates` terpasang dan dipakai untuk `reloadAsync()` saat logout, **tetapi
   EAS Update belum dikonfigurasi** — perbaikan JS masih memerlukan rebuild & pemasangan ulang.
+- **Status kas di dashboard** hanya terisi dari APK yang melaporkan buka/tutup kas (rilis
+  Oktober 2026 ke atas). Perangkat dengan APK lama selalu tampil "Belum buka" dan kasnya
+  tidak dapat dibuka ulang dari dashboard.
 
 ## 10. Troubleshooting
 
@@ -262,6 +276,9 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 | Login selalu gagal | Skema hash berbeda dengan backend | Selaraskan hashing SHA1 di `authUtils.ts` |
 | Transaksi tidak tersinkron | Tidak ada sinyal / sesi kedaluwarsa | Cek NetInfo & `user_login.expires`; sinkronisasi dilewati bila sesi habis |
 | Tutup kas selalu ditolak | Masih ada transaksi `isSync = 0` | Buka tab Sync, kirim ulang hingga bersih |
+| "Kas hari ini sudah ditutup" saat login | Kas perangkat sudah ditutup hari ini | By design; admin lembaga dapat membuka ulang kas dari dashboard |
+| "Device menunggu persetujuan Admin USSI" | Device baru diajukan lembaga, belum disetujui | Admin USSI menyetujui di menu Approval Device |
+| Transaksi tidak muncul di Monitoring Transaksi | `api_url` lembaga `http://` diblokir (403) / transaksi belum tersinkron | Ubah `api_url` ke `https://`, simpan ulang kode lembaga di perangkat, cek tab Sync |
 | Printer tidak terhubung | Belum dipasangkan / izin Bluetooth ditolak | Pasangkan di pengaturan Android; berikan izin `BLUETOOTH_CONNECT` & `BLUETOOTH_SCAN` |
 | Struk terpotong | `printer_width` tidak sesuai kertas | Ganti antara 32 (58mm) & 48 (80mm) |
 | "Modul printer tidak tersedia" | Build tanpa modul native (mis. Expo Go) | Pakai development build / APK EAS |
@@ -277,6 +294,7 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 31 Juli 2026 | | Dibuat dari `app.json`, `eas.json`, `package.json`, & kode sumber repo `Mobile-Branchless`. |
+| 1.0.1 | 6 Oktober 2026 | | Prosedur buka ulang kas, checklist migration API pusat V3–V5 & approval device, `api_url` wajib https, catatan kompatibilitas status kas, troubleshooting baru. |
 
 ---
 

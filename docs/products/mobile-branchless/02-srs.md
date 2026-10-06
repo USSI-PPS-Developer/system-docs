@@ -141,6 +141,7 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
 | FR-07 | Login | `POST /login` (`api_url`) dengan `{username, password, kodeLembaga}`; password di-hash **SHA1(uppercase)** sebelum dikirim. |
+| FR-07a | Pesan status device | Kode dari cek device di API pusat (diteruskan API lembaga) dipetakan ke pesan khusus: `13` device nonaktif, `14` lembaga nonaktif, `15` device menunggu persetujuan Admin USSI, `16` pendaftaran device ditolak. Device hanya dapat login bila `approval_status` = `APPROVED` atau `PENDING_DELETE`. |
 | FR-08 | Simpan sesi | Sukses → `user_login` di SecureStore berisi data server + `username`, `password`, `expires` (24 jam). |
 | FR-09 | Token otorisasi | Interceptor menyisipkan `Authorization: Bearer <token>` dari `user_login`. |
 | FR-10 | Ingat saya | Bila diaktifkan, `user_name` & `user_pass` disimpan di SecureStore. |
@@ -153,12 +154,14 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
-| FR-15 | Paksa buka kas | Bila `kas_opened_<YYYY-MM-DD>` belum ada dan `kas_closed_<tgl>` juga belum ada → `HomeScreen` masuk mode `bukaKas`. |
-| FR-16 | Buka kas | Input saldo awal (validasi numerik ≥ 0) → simpan `kas_opened_<tgl>` + catat ke `SaldoKas` sebagai `setoran`. |
+| FR-15 | Paksa buka kas | Bila `kas_opened_<YYYY-MM-DD>` belum ada dan `kas_closed_<tgl>` juga belum ada → `HomeScreen` masuk mode `bukaKas` (bila `kas_closed_<tgl>` ada → lihat FR-20a). |
+| FR-16 | Buka kas | Input saldo awal (validasi numerik ≥ 0) → simpan `kas_opened_<tgl>` + catat ke `SaldoKas` sebagai `setoran`, lalu laporkan `BUKA` ke `POST /devices/kas` (API pusat; gagal tidak memblokir). |
 | FR-17 | Buku kas berjalan | `updateSaldoKas()` menambah baris tiap transaksi: `setoran`/`angsuran` menambah saldo, `penarikan` mengurangi. Tabel bersifat *append-only*. |
 | FR-18 | Saldo kas terakhir | `getSaldoKasTerakhir()` mengambil baris `id` terbesar milik `userId`. |
 | FR-19 | Validasi tutup kas | `getAllTransaksiUnSync()` dicek lebih dulu; bila > 0 → **tutup kas ditolak** dengan pesan jumlah transaksi tertunda. |
-| FR-20 | Tutup kas | Konfirmasi → catat penarikan sebesar saldo akhir, hapus `kas_opened_<tgl>`, set `kas_closed_<tgl>`, lalu **logout otomatis**. |
+| FR-20 | Tutup kas | Konfirmasi → catat penarikan sebesar saldo akhir, hapus `kas_opened_<tgl>`, set `kas_closed_<tgl>`, laporkan `TUTUP` ke `POST /devices/kas` (API pusat), lalu **logout otomatis** (`handleLogout(true, pesan)`). |
+| FR-20a | Kunci login setelah tutup kas | Bila `kas_closed_<YYYY-MM-DD>` hari ini ada: `LoginScreen` menolak login biasa & biometrik **sebelum** memanggil `POST /login` dengan pesan "Kas hari ini sudah ditutup. Anda baru dapat login kembali besok."; `HomeScreen` yang terbuka dengan kas tertutup langsung logout. Kunci per perangkat (bukan per pengguna) dan terbuka otomatis saat tanggal berganti. |
+| FR-20b | Buka ulang kas | Saat kunci FR-20a aktif, `LoginScreen` memanggil `GET /devices/kas/status` (API pusat). `REOPEN` → hapus `kas_closed_<tgl>`, login dilanjutkan dan `HomeScreen` memaksa buka kas lagi. Status belum `TUTUP` di server (laporan gagal terkirim) → laporan `TUTUP` dikirim ulang. Server tak terjangkau → login tetap ditolak. Buka ulang dilakukan admin lembaga/Admin USSI dari dashboard (Manajemen Device → Kas Hari Ini) dengan alasan wajib. |
 
 ### 3.4 Pencarian Nasabah
 
@@ -175,11 +178,11 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
 | FR-26 | Setoran (offline-first) | `mockSetoranApi()` menulis transaksi ke DB lokal dengan `isSync: 0`, `tipe: "setoran"`; sinkronisasi menyusul. |
-| FR-27 | Penarikan (online-first) | `mockPenarikanApi()` memanggil `POST /transaksi/penarikan` **lebih dulu**; hanya bila sukses transaksi ditulis lokal dengan `isSync: 1`. Gagal → `Promise.reject` agar layar menampilkan error. |
+| FR-27 | Penarikan (online-first) | `mockPenarikanApi()` memanggil `POST /transaksi/penarikan` **lebih dulu**; hanya bila sukses transaksi ditulis lokal dengan `isSync: 1`. Gagal → `Promise.reject` agar layar menampilkan error. Server menolak bila nominal melebihi **saldo efektif** = Σ mutasi `tabtrans` + transaksi branchless belum diposting − (`tabung.MINIMUM` + `tabung.SALDO_BLOKIR`). |
 | FR-28 | OTP nasabah | `requestOtpApi()` → `POST /transaksi/otp-request` (`DEFAULT_API`) dengan `{rekening, nominal, userId, apiUrl}`. |
 | FR-29 | Permintaan otorisasi | `requestOtorisasiApi()` → `POST /transaksi/otorisasi-request` dengan `{rekening, nominal, tipe, userId, detail, apiUrl, lembaga}` → `requestId`. |
 | FR-30 | Cek status otorisasi | `checkOtorisasiStatusApi()` → `GET /transaksi/otorisasi-check?request_id=` → `pending`/`approved`/`rejected`. |
-| FR-31 | Rekening koran | `rekeningKoranAPI()` → `GET /mutasi/koran?no_rekening=`. |
+| FR-31 | Rekening koran | `rekeningKoranAPI()` → `GET /mutasi/koran?no_rekening=` → 10 transaksi terakhir (terbaru dulu). Saldo per baris dihitung server **mundur** dari total mutasi `tabtrans` (saldo baris terbaru = saldo akhir); saldo awal struk = saldo baris terakhir − nominalnya. |
 | FR-32 | Reversal tabungan | `updateTransaksiReversal(id)` menandai `isReversal = 1` (tidak menghapus) & mencatat log aktivitas. |
 | FR-33 | Nomor referensi | `generateNoRef()` → `BRP` + timestamp base36 + 4 karakter acak, maksimum 20 karakter. |
 
@@ -195,12 +198,12 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
-| FR-37 | Sinkronisasi otomatis | `GlobalAutoSync` memasang interval **10 detik** saat `AppState` kembali `active`; interval dihentikan saat aplikasi ke latar belakang. |
+| FR-37 | Sinkronisasi otomatis | `GlobalAutoSync` memasang interval **10 detik** saat aplikasi dibuka (bila `active`) dan tiap `AppState` kembali `active`; interval dihentikan saat aplikasi ke latar belakang. Berjalan **senyap** — tanpa dialog berhasil/gagal. |
 | FR-38 | Deteksi konektivitas | `NetInfo.fetch()` dicek sebelum tiap upaya sinkronisasi. |
 | FR-39 | Kirim batch | `POST /transaksi/sync` dengan `{ transaksi: [...] }` berisi seluruh transaksi `isSync = 0`. |
 | FR-40 | Tanda tangan permintaan | Header `X-Timestamp` & `X-Signature` = `SHA1(JSON(payload) + timestamp + ENCRYPT_KEY)`. |
 | FR-41 | Normalisasi tanggal/jam | Format `dd/mm/yyyy hh.mm.ss` dinormalkan ke `YYYY-MM-DD` + `HH:mm:ss`; fallback jam `00:00:00`. |
-| FR-42 | Tandai tersinkron | Sukses → `updateTransaksiSync(id)` untuk tiap transaksi. |
+| FR-42 | Tandai tersinkron | Hanya transaksi yang di-`results` server berstatus `success` yang ditandai via `updateTransaksiSync(id)`; sisanya dicoba lagi pada siklus berikutnya. Server memproses per baris — satu baris gagal tidak menggagalkan batch. |
 | FR-43 | Lewati sesi kedaluwarsa | Bila `user_login.expires` terlampaui, sinkronisasi dilewati. |
 | FR-44 | Sinkronisasi manual | `SyncTransaksiScreen` (tab **sync**) untuk memicu pengiriman ulang. |
 | FR-45 | Ambil mutasi server | `fetchMutasiFromServer(from, to, userName)` → `GET /mutasi`. |
@@ -216,7 +219,7 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | FR-50 | Cetak via RawBT | Driver `rawbt`: deep link `rawbt:base64,<payload>`; bila aplikasi tidak terpasang, tawarkan buka Play Store. |
 | FR-51 | Pratinjau struk | `StrukPreviewModal` menampilkan bukti transaksi sebelum dicetak. |
 | FR-52 | Cetak otomatis | Preferensi `auto_print_struk` mencetak langsung setelah transaksi berhasil. |
-| FR-53 | Cetak ulang | `CetakStrukScreen` menampilkan daftar transaksi & memungkinkan cetak ulang. |
+| FR-53 | Cetak ulang | `CetakStrukScreen` menampilkan daftar transaksi (terbaru di atas) dengan pencarian nama/rekening/no. ref dan filter jenis (Setoran/Penarikan/Angsuran); ketuk kartu untuk cetak ulang struk, tombol "Cetak Daftar" mencetak daftar + rekap sesuai filter aktif setelah konfirmasi. |
 
 ### 3.9 Pelaporan & Audit
 
@@ -280,6 +283,8 @@ dan interceptor header perangkat + token. Respons dianggap sukses bila `response
 | `/mutasi/koran` | GET | Lembaga | Rekening koran |
 | `/mutasi` | GET | Lembaga | Mutasi rentang tanggal |
 | `/devices/user/location` | POST | Pusat | Lapor lokasi petugas |
+| `/devices/kas` | POST | Pusat | Lapor buka/tutup kas (`BUKA`/`TUTUP`) |
+| `/devices/kas/status` | GET | Pusat | Status kas device hari ini (`BUKA`/`TUTUP`/`REOPEN`) |
 
 ### 5.2 Antarmuka Pengguna
 
@@ -352,6 +357,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.0.0 | 31 Juli 2026 | | Dokumen dibuat berdasarkan kode sumber repo `Mobile-Branchless`. |
+| 1.0.1 | 6 Oktober 2026 | | FR-53 diperbarui (pencarian/filter cetak ulang); tambah FR-07a (kode status device 13–16), FR-20a (kunci login setelah tutup kas), FR-20b (buka ulang kas); FR-16/20 lapor status kas; FR-27 saldo efektif; FR-31 saldo rekening koran; FR-37/42 sync senyap & per baris; endpoint `/devices/kas*` di §5.1. |
 
 ---
 
