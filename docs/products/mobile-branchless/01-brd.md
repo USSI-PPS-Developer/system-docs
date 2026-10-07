@@ -107,16 +107,18 @@ didekripsi di klien. Distribusi via **EAS Build** (APK internal).
 |----|------------------|-----------|---------|
 | BR-001 | Petugas dapat **mengatur lembaga** lewat kode lembaga. | Wajib | `GET /lembaga/kode/{kode}` (API pusat) → simpan `api_url` lembaga. |
 | BR-002 | Petugas dapat **login** dengan aman, termasuk **biometrik**. | Wajib | `POST /login`; password di-hash SHA1; sesi 24 jam. |
+| BR-002a | Hanya user yang diizinkan **core** yang dapat login Branchless (mis. AO yang dipindah ke teller backoffice diblokir dari core). | Wajib | Dua lapis: device aktif di dashboard **dan** `sys_daftar_user.branchless_login_flag = 1` di core. |
 | BR-003 | Sesi **auto-logout saat idle** 5 menit. | Wajib | Perangkat dibawa keluar kantor — risiko akses tak sah. |
-| BR-004 | Petugas **wajib membuka kas** sebelum bertransaksi. | Wajib | Dikunci per tanggal; tanpa buka kas, menu transaksi tidak dapat diakses. |
+| BR-004 | Petugas **wajib membuka kas** sebelum bertransaksi. | Wajib | Dikunci per tanggal; tanpa buka kas, menu transaksi tidak dapat diakses. Berlaku untuk lembaga yang mengaktifkan setting *Wajib buka kas* (BR-004a). |
+| BR-004a | **Buka kas dapat dinonaktifkan per lembaga** dari dashboard. | Tinggi | Lembaga tanpa buka kas: petugas langsung masuk menu tanpa input saldo awal dan saldo kas tidak membatasi penarikan; tutup kas tetap wajib. Default: aktif. |
 | BR-005 | Sistem mencatat **buku kas berjalan** tiap transaksi. | Wajib | Tabel `SaldoKas` bersifat *append-only*. |
 | BR-006 | **Tutup kas ditolak** bila masih ada transaksi belum tersinkron. | Wajib | Mencegah selisih kas & kehilangan data transaksi. |
 | BR-006a | Setelah tutup kas, petugas **logout otomatis** dan **tidak dapat login kembali** pada hari yang sama. | Wajib | Kas yang sudah ditutup tidak boleh dibuka/dipakai bertransaksi lagi hingga hari berikutnya. Kunci berlaku per perangkat. |
-| BR-006b | **Admin lembaga dapat membuka ulang kas** yang sudah ditutup dari dashboard, disertai alasan. | Tinggi | Status buka/tutup kas tiap perangkat dilaporkan ke API pusat & terlihat di dashboard; buka ulang tercatat (siapa, kapan, alasan). Petugas wajib buka kas lagi. |
+| BR-006b | **Admin lembaga dapat membuka ulang kas** yang sudah ditutup dari dashboard, disertai alasan. | Tinggi | Status buka/tutup kas tiap perangkat dilaporkan ke API pusat & terlihat di dashboard; buka ulang tercatat (siapa, kapan, alasan). Saldo kas petugas sebelum tutup kas **dikembalikan otomatis**, tanpa buka kas lagi. |
 | BR-007 | Petugas dapat melayani **setoran tabungan secara offline**. | Wajib | Uang masuk ke petugas — aman ditulis lokal dulu. |
 | BR-008 | **Penarikan wajib divalidasi server** sebelum uang diserahkan. | Wajib | Uang keluar & **saldo efektif** nasabah harus mencukupi: saldo Core + transaksi branchless yang belum diposting − (saldo minimum + saldo blokir). |
-| BR-009 | Penarikan dapat memerlukan **OTP nasabah** dan/atau **otorisasi supervisor**. | Tinggi | `POST /transaksi/otp-request`, `/transaksi/otorisasi-request`. |
-| BR-009a | Transaksi di atas **limit device** (setoran > `limit_setoran`, penarikan > `limit_penarikan`) setiap **reversal**, dan setiap **cetak ulang struk** (pencegahan struk ganda / fraud) wajib disetujui **otorisator Core Banking**. Petugas memilih otorisator dari daftar user core yang berwenang. | Wajib | *Single source of truth* dengan core: permintaan masuk ke `app_otorisasi` dan disetujui/ditolak dari menu otorisasi core, sama seperti transaksi teller. Otorisator disaring seperti `listUserOtorisasi` core — role `ROLE_OTORISATOR`, satu kantor didahulukan, dan limit kewenangan (`penerimaan_tab` / `pengeluaran_tab`) ≥ nominal. |
+| BR-009 | Penarikan dapat memerlukan **OTP nasabah** dan/atau **otorisasi supervisor**. | Tinggi | `POST /transaksi/otp-request`, `/transaksi/otorisasi-request`. OTP sementara dinonaktifkan sampai API gateway WA lembaga tersedia. |
+| BR-009a | Transaksi di atas **limit petugas di core** (setoran > `sys_daftar_user.penerimaan_tab`, penarikan > `pengeluaran_tab`; limit device dashboard hanya cadangan bila kolom tidak ada) setiap **reversal**, dan setiap **cetak ulang struk** (pencegahan struk ganda / fraud) wajib disetujui **otorisator Core Banking**. Petugas memilih otorisator dari daftar user core yang berwenang. | Wajib | *Single source of truth* dengan core: permintaan masuk ke `app_otorisasi` dan disetujui/ditolak dari menu otorisasi core, sama seperti transaksi teller. Otorisator disaring seperti `listUserOtorisasi` core — role `ROLE_OTORISATOR`, satu kantor didahulukan, dan limit kewenangan (`penerimaan_tab` / `pengeluaran_tab`) ≥ nominal. |
 | BR-010 | Petugas dapat melayani **angsuran kredit**. | Wajib | Alur serupa setoran. |
 | BR-011 | Petugas dapat melakukan **reversal** transaksi keliru. | Tinggi | Ditandai `isReversal`, bukan dihapus — jejak audit terjaga. |
 | BR-012 | Petugas dapat **mencari nasabah tanpa koneksi**. | Wajib | Dari berkas SQLite master yang diunduh. |
@@ -234,7 +236,8 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 - Petugas dapat **mengatur lembaga** dari kode lembaga dan mengunduh **DB master** harian.
 - Petugas dapat **login** (biasa & biometrik); sesi berakhir otomatis setelah 24 jam atau
   5 menit tanpa aktivitas.
-- Aplikasi **memaksa buka kas** sebelum transaksi hari itu dapat dilakukan.
+- Aplikasi **memaksa buka kas** sebelum transaksi hari itu dapat dilakukan — kecuali lembaga
+  menonaktifkan setting *Wajib buka kas*, maka buka kas dilewati otomatis.
 - **Setoran & angsuran** berhasil diselesaikan **dalam kondisi tanpa sinyal**, tersimpan
   lokal, dan **tersinkron otomatis** saat sinyal kembali.
 - **Penarikan gagal ditolak dengan pesan jelas** bila server tidak menyetujui, dan **tidak**
@@ -248,7 +251,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
   (diikuti logout) ketika seluruh transaksi bersih.
 - Setelah tutup kas, **login (biasa maupun biometrik) ditolak** pada perangkat tersebut
   hingga pergantian tanggal, **kecuali** admin lembaga membuka ulang kas dari dashboard —
-  setelah itu petugas dapat login dan wajib membuka kas lagi.
+  setelah itu petugas dapat login dan saldo kas sebelum tutup kas dikembalikan.
 - Device yang **belum disetujui / ditolak** tidak dapat login, dengan pesan yang menjelaskan statusnya.
 - **Rekap harian & log aktivitas** menampilkan seluruh transaksi hari itu untuk rekonsiliasi.
 
@@ -261,6 +264,8 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 | 1.0.0 | 31 Juli 2026 | | Dokumen dibuat berdasarkan implementasi repo `Mobile-Branchless` (React Native/Expo SDK 54). |
 | 1.0.1 | 6 Oktober 2026 | | Tambah BR-006a (kunci login setelah tutup kas), BR-006b (buka ulang kas dari dashboard), BR-021 (approval device); BR-008 saldo efektif; BR-014 sync senyap. |
 | 1.0.2 | 7 Oktober 2026 | | Tambah BR-009a (otorisasi terintegrasi Core Banking, pilih otorisator; termasuk reversal & cetak ulang struk); approval otorisasi di dashboard branchless dihapus. |
+| 1.0.3 | 7 Oktober 2026 | | BR-006b: saldo kas dikembalikan saat buka ulang. Tambah BR-004a (buka kas dapat dinonaktifkan per lembaga); kriteria penerimaan buka kas disesuaikan. |
+| 1.0.4 | 7 Oktober 2026 | | Tambah BR-002a (izin login dari `branchless_login_flag` core); BR-009a: limit petugas bersumber dari core. |
 
 ---
 

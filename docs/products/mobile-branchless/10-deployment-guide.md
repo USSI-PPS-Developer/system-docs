@@ -89,6 +89,8 @@ Berbeda dari produk mobile lain, **tidak ada berkas `.env`** dan **tidak ada blo
 |-------------------|--------|-----------|
 | `kode_lembaga`, `nama_lembaga`, `alamat_lembaga` | `GET /lembaga/kode/{kode}` | Identitas lembaga |
 | `api_url` | Respons lembaga | **Base URL API lembaga** — dipakai hampir seluruh operasi transaksi |
+| `wajib_buka_kas` | Respons lembaga | `"true"`/`"false"` — setting buka kas lembaga; diperbarui tiap login. Kosong/tidak dikirim API pusat lama → dianggap `true` |
+| `kas_saldo_tutup_<tgl>` | Tutup kas | `{saldo, userId}` saat tutup kas; dipakai mengembalikan saldo bila admin membuka ulang kas, lalu dihapus |
 | `printer_driver` | Pengaturan | `internal` (BLE) atau `rawbt` |
 | `printer_address` | Pengaturan | Alamat MAC printer |
 | `printer_width` | Pengaturan | `32` (58mm) atau `48` (80mm) |
@@ -221,9 +223,11 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 - [ ] Skema enkripsi (`keyVersion` / AES) & hashing di server **identik** dengan aplikasi.
 - [ ] Akun petugas terdaftar dengan `kode_group1..3` & `unit_kerja` yang benar — nilai ini
       menentukan nasabah mana yang terlihat oleh petugas.
-- [ ] Migration API pusat (`backend-branchless`) **V3, V4, V5** sudah dijalankan manual
+- [ ] Migration API pusat (`backend-branchless`) **V3, V4, V5, V6** sudah dijalankan manual
       **sebelum** backend baru di-deploy (Flyway tidak terpasang). Tanpa V4 (`devices.approval_status`)
       cek device saat login gagal untuk **semua** petugas.
+      Tanpa V6 (`lembaga.wajib_buka_kas`) seluruh endpoint `/lembaga` gagal — termasuk
+      `GET /lembaga/kode/{kode}`, sehingga petugas **tidak dapat mengatur kode lembaga**.
 - [ ] `app.ini` API lembaga (`backend-client-branchless`) memuat `[otorisasi] role_otorisator`
       yang **sama** dengan `ROLE_OTORISATOR` di `.env` core. Tanpa ini daftar otorisator gagal
       dimuat dan transaksi di atas limit tidak dapat diproses.
@@ -301,6 +305,7 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 | 1.0.0 | 31 Juli 2026 | | Dibuat dari `app.json`, `eas.json`, `package.json`, & kode sumber repo `Mobile-Branchless`. |
 | 1.0.1 | 6 Oktober 2026 | | Prosedur buka ulang kas, checklist migration API pusat V3–V5 & approval device, `api_url` wajib https, catatan kompatibilitas status kas, troubleshooting baru. |
 | 1.0.2 | 7 Oktober 2026 | | Otorisasi pindah ke API lembaga / core (`app_otorisasi`); checklist `[otorisasi] role_otorisator` & limit otorisator core. |
+| 1.0.3 | 7 Oktober 2026 | | Kunci SecureStore `wajib_buka_kas` & `kas_saldo_tutup_<tgl>`; checklist migration API pusat V6 (`lembaga.wajib_buka_kas`). |
 
 ---
 

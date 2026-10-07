@@ -129,7 +129,7 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
-| FR-01 | Atur lembaga | Layar `LoginScreen` → modal `setting`: input kode lembaga → `GET /lembaga/kode/{kode}` (`DEFAULT_API`); simpan `kode_lembaga`, `nama_lembaga`, `alamat_lembaga`, `api_url` di SecureStore. |
+| FR-01 | Atur lembaga | Layar `LoginScreen` → modal `setting`: input kode lembaga → `GET /lembaga/kode/{kode}` (`DEFAULT_API`); simpan `kode_lembaga`, `nama_lembaga`, `alamat_lembaga`, `api_url`, `wajib_buka_kas` di SecureStore. Setting `wajib_buka_kas` diambil ulang tiap login berhasil (`refreshSettingKasLembaga()`, maks. 5 detik; gagal → nilai tersimpan dipakai). |
 | FR-02 | Identitas perangkat | `getDeviceInfo()` → `deviceId` (Android ID / iOS IDFV), fallback UUID disimpan sebagai `fallback_device_id`; disimpan juga di store Zustand `useDeviceInfoStore`. |
 | FR-03 | Header perangkat | Interceptor axios menyisipkan `X-Device-Id` & `X-Device-Name` pada tiap request. |
 | FR-04 | Unduh DB master | `downloadDataFromAPI()` → `GET /db/download/{YYMMDD}` (`api_url`); simpan ke `cacheDirectory` sebagai `dbbranchless_YYMMDD.db`. |
@@ -142,6 +142,7 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 |----|-----------|--------|
 | FR-07 | Login | `POST /login` (`api_url`) dengan `{username, password, kodeLembaga}`; password di-hash **SHA1(uppercase)** sebelum dikirim. |
 | FR-07a | Pesan status device | Kode dari cek device di API pusat (diteruskan API lembaga) dipetakan ke pesan khusus: `13` device nonaktif, `14` lembaga nonaktif, `15` device menunggu persetujuan Admin USSI, `16` pendaftaran device ditolak. Device hanya dapat login bila `approval_status` = `APPROVED` atau `PENDING_DELETE`. |
+| FR-07b | Izin login & limit dari core | API lembaga membaca `sys_daftar_user` di core saat login: bila kolom `branchless_login_flag` ada dan nilainya ≠ 1 (termasuk NULL), login ditolak kode `17` "User Anda tidak diizinkan login Branchless" — lapis kedua setelah cek device aktif (FR-07a). `limit_setoran` = `penerimaan_tab`, `limit_penarikan` = `pengeluaran_tab` (NULL → 0, artinya setiap transaksi wajib otorisasi). Bila kolom limit tidak ada di core, dipakai limit device dari dashboard. Flag hanya dicek saat login; sesi yang sedang berjalan tidak diputus. |
 | FR-08 | Simpan sesi | Sukses → `user_login` di SecureStore berisi data server + `username`, `password`, `expires` (24 jam). |
 | FR-09 | Token otorisasi | Interceptor menyisipkan `Authorization: Bearer <token>` dari `user_login`. |
 | FR-10 | Ingat saya | Bila diaktifkan, `user_name` & `user_pass` disimpan di SecureStore. |
@@ -154,14 +155,16 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
-| FR-15 | Paksa buka kas | Bila `kas_opened_<YYYY-MM-DD>` belum ada dan `kas_closed_<tgl>` juga belum ada → `HomeScreen` masuk mode `bukaKas` (bila `kas_closed_<tgl>` ada → lihat FR-20a). |
+| FR-15 | Paksa buka kas | Bila `kas_opened_<YYYY-MM-DD>` belum ada dan `kas_closed_<tgl>` juga belum ada → `HomeScreen` masuk mode `bukaKas` (bila `kas_closed_<tgl>` ada → lihat FR-20a). Hanya berlaku bila lembaga `wajib_buka_kas = true` (lihat FR-15a). |
+| FR-15a | Setting buka kas per lembaga | Kolom `lembaga.wajib_buka_kas` di API pusat (default `1`), diatur Admin USSI dari dashboard (Manajemen Lembaga → toggle *Wajib buka kas*). Bila `false`: layar buka kas dilewati — `kas_opened_<tgl>` di-set `"0"` otomatis & `BUKA` saldo 0 dilaporkan ke `POST /devices/kas`; saldo kas **tidak** membatasi penarikan (FR-16a). Tutup kas (FR-19/20/20a/20b) tetap berlaku. |
 | FR-16 | Buka kas | Input saldo awal (validasi numerik ≥ 0) → simpan `kas_opened_<tgl>` + catat ke `SaldoKas` sebagai `setoran`, lalu laporkan `BUKA` ke `POST /devices/kas` (API pusat; gagal tidak memblokir). |
+| FR-16a | Batas saldo kas penarikan | Bila `wajib_buka_kas = true`, penarikan ditolak di aplikasi bila nominal > `getSaldoKasTerakhir()`. Bila `false`, pemeriksaan ini dilewati. |
 | FR-17 | Buku kas berjalan | `updateSaldoKas()` menambah baris tiap transaksi: `setoran`/`angsuran` menambah saldo, `penarikan` mengurangi. Tabel bersifat *append-only*. |
 | FR-18 | Saldo kas terakhir | `getSaldoKasTerakhir()` mengambil baris `id` terbesar milik `userId`. |
 | FR-19 | Validasi tutup kas | `getAllTransaksiUnSync()` dicek lebih dulu; bila > 0 → **tutup kas ditolak** dengan pesan jumlah transaksi tertunda. |
-| FR-20 | Tutup kas | Konfirmasi → catat penarikan sebesar saldo akhir, hapus `kas_opened_<tgl>`, set `kas_closed_<tgl>`, laporkan `TUTUP` ke `POST /devices/kas` (API pusat), lalu **logout otomatis** (`handleLogout(true, pesan)`). |
+| FR-20 | Tutup kas | Konfirmasi → catat penarikan sebesar saldo akhir, hapus `kas_opened_<tgl>`, set `kas_closed_<tgl>`, simpan `kas_saldo_tutup_<tgl>` = `{saldo, userId}`, laporkan `TUTUP` ke `POST /devices/kas` (API pusat), lalu **logout otomatis** (`handleLogout(true, pesan)`). |
 | FR-20a | Kunci login setelah tutup kas | Bila `kas_closed_<YYYY-MM-DD>` hari ini ada: `LoginScreen` menolak login biasa & biometrik **sebelum** memanggil `POST /login` dengan pesan "Kas hari ini sudah ditutup. Anda baru dapat login kembali besok."; `HomeScreen` yang terbuka dengan kas tertutup langsung logout. Kunci per perangkat (bukan per pengguna) dan terbuka otomatis saat tanggal berganti. |
-| FR-20b | Buka ulang kas | Saat kunci FR-20a aktif, `LoginScreen` memanggil `GET /devices/kas/status` (API pusat). `REOPEN` → hapus `kas_closed_<tgl>`, login dilanjutkan dan `HomeScreen` memaksa buka kas lagi. Status belum `TUTUP` di server (laporan gagal terkirim) → laporan `TUTUP` dikirim ulang. Server tak terjangkau → login tetap ditolak. Buka ulang dilakukan admin lembaga/Admin USSI dari dashboard (Manajemen Device → Kas Hari Ini) dengan alasan wajib. |
+| FR-20b | Buka ulang kas | Saat kunci FR-20a aktif, `LoginScreen` memanggil `GET /devices/kas/status` (API pusat). `REOPEN` → hapus `kas_closed_<tgl>`, login dilanjutkan; `HomeScreen` mengembalikan saldo sebelum tutup kas (`pulihkanSaldoBukaUlang()`: catat `setoran` sebesar saldo di `SaldoKas`, set `kas_opened_<tgl>`, lapor `BUKA`) tanpa layar buka kas — hanya bila user yang login sama dengan penutup kas dan saldo > 0; selain itu kembali ke FR-15/15a. Status belum `TUTUP` di server (laporan gagal terkirim) → laporan `TUTUP` dikirim ulang. Server tak terjangkau → login tetap ditolak. Buka ulang dilakukan admin lembaga/Admin USSI dari dashboard (Manajemen Device → Kas Hari Ini) dengan alasan wajib. |
 
 ### 3.4 Pencarian Nasabah
 
@@ -179,8 +182,8 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 |----|-----------|--------|
 | FR-26 | Setoran (offline-first) | `mockSetoranApi()` menulis transaksi ke DB lokal dengan `isSync: 0`, `tipe: "setoran"`; sinkronisasi menyusul. |
 | FR-27 | Penarikan (online-first) | `mockPenarikanApi()` memanggil `POST /transaksi/penarikan` **lebih dulu**; hanya bila sukses transaksi ditulis lokal dengan `isSync: 1`. Gagal → `Promise.reject` agar layar menampilkan error. Server menolak bila nominal melebihi **saldo efektif** = Σ mutasi `tabtrans` + transaksi branchless belum diposting − (`tabung.MINIMUM` + `tabung.SALDO_BLOKIR`). |
-| FR-28 | OTP nasabah | `requestOtpApi()` → `POST /transaksi/otp-request` (`DEFAULT_API`) dengan `{rekening, nominal, userId, apiUrl}`. |
-| FR-29 | Permintaan otorisasi | Dipicu bila setoran > `limit_setoran`, penarikan > `limit_penarikan` (dari `user_login`), reversal, atau cetak ulang struk. `OtorisasiModal` memuat daftar otorisator lewat `getOtorisatorListApi()` → `GET /transaksi/otorisator?userId=&tipe=&nominal=` (API lembaga), petugas memilih satu, lalu `requestOtorisasiApi()` → `POST /transaksi/otorisasi-request` `{userId, idOtorisator, tipe, nominal, keterangan}` → `requestId` (= `identifier` di `app_otorisasi` core). Server memvalidasi ulang bahwa otorisator berwenang. |
+| FR-28 | OTP nasabah | `requestOtpApi()` → `POST /transaksi/otp-request` (`DEFAULT_API`) dengan `{rekening, nominal, userId, apiUrl}`. **Sementara nonaktif** (`OTP_PENARIKAN_AKTIF = false` di `PenarikanScreen.tsx`) sampai API gateway WA lembaga tersedia — penarikan langsung diproses tanpa OTP. |
+| FR-29 | Permintaan otorisasi | Dipicu bila setoran > `limit_setoran`, penarikan > `limit_penarikan` (dari `user_login`, bersumber dari `sys_daftar_user` core — FR-07b), reversal, atau cetak ulang struk. `OtorisasiModal` memuat daftar otorisator lewat `getOtorisatorListApi()` → `GET /transaksi/otorisator?userId=&tipe=&nominal=` (API lembaga), petugas memilih satu, lalu `requestOtorisasiApi()` → `POST /transaksi/otorisasi-request` `{userId, idOtorisator, tipe, nominal, keterangan}` → `requestId` (= `identifier` di `app_otorisasi` core). Server memvalidasi ulang bahwa otorisator berwenang. |
 | FR-29a | Daftar otorisator | Padanan `home/listUserOtorisasi` core: `sys_daftar_user` dengan `user_code` ∈ `[otorisasi] role_otorisator` (app.ini API lembaga, = `ROLE_OTORISATOR` core), `user_code ≠ 18`, bukan peminta, kolom limit ≥ nominal (`setoran`→`penerimaan_tab`, `penarikan`→`pengeluaran_tab`, `angsuran`→`penerimaan_kre`; `reversal` & `cetak_ulang` tanpa filter limit). Otorisator satu kantor (`UNIT_KERJA`/`KODE_WILAYAH`) didahulukan; bila kosong, semua kantor. |
 | FR-30 | Cek status otorisasi | `checkOtorisasiStatusApi()` → `GET /transaksi/otorisasi-check?request_id=&userId=` tiap 3 detik → `pending`/`approved`/`rejected`/`cancelled` (status core `0`/`1`/`3`/`2`). Disetujui → setoran disimpan, penarikan lanjut OTP nasabah, reversal diproses. Kolom `password` `app_otorisasi` tidak pernah dikirim ke aplikasi. |
 | FR-30a | Batal otorisasi | `cancelOtorisasiApi()` → `POST /transaksi/otorisasi-cancel` mengubah status `0` → `2` (padanan `home/BatalOtorisasi`) saat petugas menekan Batal atau menutup layar, agar tidak tertinggal di notifikasi otorisator. |
@@ -273,13 +276,13 @@ dan interceptor header perangkat + token. Respons dianggap sukses bila `response
 
 | Endpoint | Metode | Base | Fungsi |
 |----------|--------|------|--------|
-| `/lembaga/kode/{kode}` | GET | Pusat | Detail lembaga + `api_url` |
+| `/lembaga/kode/{kode}` | GET | Pusat | Detail lembaga + `api_url` + `wajib_buka_kas` |
 | `/login` | POST | Lembaga | Login petugas |
 | `/db/download/{YYMMDD}` | GET | Lembaga | Unduh berkas SQLite master |
 | `/worker/generate-master-nasabah` | GET | Lembaga | Picu pembangkitan DB master |
 | `/transaksi/sync` | POST | Lembaga | Sinkronisasi batch transaksi |
 | `/transaksi/penarikan` | POST | Lembaga | Penarikan (validasi online) |
-| `/transaksi/otp-request` | POST | Pusat | Kirim OTP ke nasabah |
+| `/transaksi/otp-request` | POST | Pusat | Kirim OTP ke nasabah. Pusat meneruskan ke backend-client lembaga hanya bila `apiUrl` di body cocok dengan `api_url` lembaga terdaftar (selain itu `01` "API URL lembaga tidak terdaftar"). |
 | `/transaksi/otorisator` | GET | Lembaga | Daftar otorisator core yang berwenang |
 | `/transaksi/otorisasi-request` | POST | Lembaga | Tulis permintaan otorisasi ke `app_otorisasi` core |
 | `/transaksi/otorisasi-check` | GET | Lembaga | Cek status otorisasi di core |
@@ -364,6 +367,9 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | 1.0.0 | 31 Juli 2026 | | Dokumen dibuat berdasarkan kode sumber repo `Mobile-Branchless`. |
 | 1.0.1 | 6 Oktober 2026 | | FR-53 diperbarui (pencarian/filter cetak ulang); tambah FR-07a (kode status device 13–16), FR-20a (kunci login setelah tutup kas), FR-20b (buka ulang kas); FR-16/20 lapor status kas; FR-27 saldo efektif; FR-31 saldo rekening koran; FR-37/42 sync senyap & per baris; endpoint `/devices/kas*` di §5.1. |
 | 1.0.2 | 7 Oktober 2026 | | Otorisasi terintegrasi Core Banking (`app_otorisasi`): FR-29/30 diperbarui, tambah FR-29a (daftar otorisator) & FR-30a (batal otorisasi); FR-53 cetak ulang struk wajib otorisasi; endpoint otorisasi pindah dari API pusat ke API lembaga di §5.1; penarikan kini memeriksa `limit_penarikan`. |
+| 1.0.3 | 7 Oktober 2026 | | FR-20/20b: saldo kas sebelum tutup kas dikembalikan saat buka ulang (kunci `kas_saldo_tutup_<tgl>`). Tambah FR-15a (setting wajib buka kas per lembaga) & FR-16a (batas saldo kas penarikan); FR-01 simpan/refresh `wajib_buka_kas`; respons `/lembaga/kode` di §5.1. |
+| 1.0.4 | 7 Oktober 2026 | | Tambah FR-07b: login ditolak (kode `17`) bila `sys_daftar_user.branchless_login_flag` ≠ 1; limit setoran/penarikan petugas dibaca dari `penerimaan_tab`/`pengeluaran_tab` core (cadangan: limit device dashboard). FR-29 disesuaikan. |
+| 1.0.5 | 7 Oktober 2026 | | §5.1: `/transaksi/otp-request` hanya diteruskan ke `api_url` lembaga terdaftar. |
 
 ---
 
