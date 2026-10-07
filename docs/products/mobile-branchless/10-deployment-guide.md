@@ -205,8 +205,8 @@ berikut harus sudah siap dan dikelola tim backend:
 
 | Layanan | Tanggung jawab | Dipakai untuk |
 |---------|----------------|---------------|
-| **API Pusat** (`DEFAULT_API`) | Tim USSI | Lookup lembaga, OTP, otorisasi, lapor lokasi petugas, status kas harian, approval device |
-| **API Lembaga** (`api_url`) | Tim USSI / lembaga | Login, sinkronisasi transaksi, penarikan, mutasi |
+| **API Pusat** (`DEFAULT_API`) | Tim USSI | Lookup lembaga, OTP, lapor lokasi petugas, status kas harian, approval device |
+| **API Lembaga** (`api_url`) | Tim USSI / lembaga | Login, sinkronisasi transaksi, penarikan, mutasi, otorisasi (`app_otorisasi` core) |
 | **Pembangkit DB master** | Sisi server lembaga | Menyediakan `dbbranchless_YYMMDD.db` untuk `GET /db/download/{YYMMDD}` |
 
 Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasabah` dan
@@ -224,6 +224,11 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 - [ ] Migration API pusat (`backend-branchless`) **V3, V4, V5** sudah dijalankan manual
       **sebelum** backend baru di-deploy (Flyway tidak terpasang). Tanpa V4 (`devices.approval_status`)
       cek device saat login gagal untuk **semua** petugas.
+- [ ] `app.ini` API lembaga (`backend-client-branchless`) memuat `[otorisasi] role_otorisator`
+      yang **sama** dengan `ROLE_OTORISATOR` di `.env` core. Tanpa ini daftar otorisator gagal
+      dimuat dan transaksi di atas limit tidak dapat diproses.
+- [ ] Otorisator memiliki limit kewenangan di core (`penerimaan_tab`, `pengeluaran_tab`) ≥ nominal
+      yang akan diotorisasi, dan dapat login ke core untuk menyetujui notifikasi otorisasi.
 - [ ] Device petugas berstatus **APPROVED** di dashboard (Manajemen Device / Approval Device).
 - [ ] `api_url` lembaga memakai **`https://`** — domain API lembaga dapat memblokir akses
       `http://` (403 dari WAF). Setelah `api_url` diubah, petugas wajib **simpan ulang kode
@@ -295,6 +300,7 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 |-------|---------|----------|---------------------|
 | 1.0.0 | 31 Juli 2026 | | Dibuat dari `app.json`, `eas.json`, `package.json`, & kode sumber repo `Mobile-Branchless`. |
 | 1.0.1 | 6 Oktober 2026 | | Prosedur buka ulang kas, checklist migration API pusat V3–V5 & approval device, `api_url` wajib https, catatan kompatibilitas status kas, troubleshooting baru. |
+| 1.0.2 | 7 Oktober 2026 | | Otorisasi pindah ke API lembaga / core (`app_otorisasi`); checklist `[otorisasi] role_otorisator` & limit otorisator core. |
 
 ---
 

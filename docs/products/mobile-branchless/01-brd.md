@@ -79,8 +79,9 @@ didekripsi di klien. Distribusi via **EAS Build** (APK internal).
 
 - **Core Banking & pembukuan akhir** — dimiliki sistem inti (IBS Core); aplikasi hanya
   mengirim transaksi untuk diposting.
-- **Persetujuan/otorisasi supervisor** — aplikasi hanya *meminta* dan *mengecek status*;
-  keputusan dibuat di sistem back-office.
+- **Persetujuan/otorisasi supervisor** — aplikasi hanya *meminta* (memilih otorisator) dan
+  *mengecek status*; keputusan dibuat otorisator di **Core Banking (IBS)**, tabel `app_otorisasi`.
+  Dashboard branchless tidak lagi memiliki menu approval otorisasi.
 - **Pembukaan rekening & onboarding nasabah** — dilayani produk `IBS Onboarding Mobile`.
 - **Aplikasi untuk nasabah** — produk ini khusus petugas.
 - **Pembangkitan berkas SQLite master** — dilakukan sisi server lembaga; aplikasi hanya
@@ -115,6 +116,7 @@ didekripsi di klien. Distribusi via **EAS Build** (APK internal).
 | BR-007 | Petugas dapat melayani **setoran tabungan secara offline**. | Wajib | Uang masuk ke petugas — aman ditulis lokal dulu. |
 | BR-008 | **Penarikan wajib divalidasi server** sebelum uang diserahkan. | Wajib | Uang keluar & **saldo efektif** nasabah harus mencukupi: saldo Core + transaksi branchless yang belum diposting − (saldo minimum + saldo blokir). |
 | BR-009 | Penarikan dapat memerlukan **OTP nasabah** dan/atau **otorisasi supervisor**. | Tinggi | `POST /transaksi/otp-request`, `/transaksi/otorisasi-request`. |
+| BR-009a | Transaksi di atas **limit device** (setoran > `limit_setoran`, penarikan > `limit_penarikan`) setiap **reversal**, dan setiap **cetak ulang struk** (pencegahan struk ganda / fraud) wajib disetujui **otorisator Core Banking**. Petugas memilih otorisator dari daftar user core yang berwenang. | Wajib | *Single source of truth* dengan core: permintaan masuk ke `app_otorisasi` dan disetujui/ditolak dari menu otorisasi core, sama seperti transaksi teller. Otorisator disaring seperti `listUserOtorisasi` core — role `ROLE_OTORISATOR`, satu kantor didahulukan, dan limit kewenangan (`penerimaan_tab` / `pengeluaran_tab`) ≥ nominal. |
 | BR-010 | Petugas dapat melayani **angsuran kredit**. | Wajib | Alur serupa setoran. |
 | BR-011 | Petugas dapat melakukan **reversal** transaksi keliru. | Tinggi | Ditandai `isReversal`, bukan dihapus — jejak audit terjaga. |
 | BR-012 | Petugas dapat **mencari nasabah tanpa koneksi**. | Wajib | Dari berkas SQLite master yang diunduh. |
@@ -220,7 +222,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 | RB-004 | Petugas menyalahgunakan uang setoran nasabah | Fraud, kerugian & reputasi | Buku kas berjalan, log aktivitas, struk untuk nasabah, pemantauan lokasi. |
 | RB-005 | DB master usang (tidak diunduh ulang) | Nasabah baru tidak ditemukan, data keliru | Nama berkas per tanggal memaksa unduh harian; tombol Unduh DB di layar login. |
 | RB-006 | Perangkat tanpa sinyal seharian | Antrean sinkronisasi menumpuk, tutup kas tertahan | Sinkronisasi otomatis saat sinyal kembali + layar sinkronisasi manual. |
-| RB-007 | Printer gagal/kehabisan baterai | Nasabah tidak menerima bukti | Fallback **RawBT**; struk dapat dicetak ulang dari daftar transaksi. |
+| RB-007 | Printer gagal/kehabisan baterai | Nasabah tidak menerima bukti | Fallback **RawBT**; struk dapat dicetak ulang dari daftar transaksi (dengan otorisasi). |
 | RB-008 | Transaksi ganda akibat petugas menekan dua kali | Selisih pembukuan | Penjagaan `loading` di tiap handler; `noRef` unik per transaksi. |
 | RB-009 | Kunci enkripsi tertanam di dalam APK | Dapat diekstrak dari berkas aplikasi | Setara obfuscation; roadmap: pindahkan rahasia & otorisasi ke sisi server. |
 | RB-010 | Beda versi skema enkripsi aplikasi ↔ backend | Login gagal / payload gagal didekripsi | Sinkronkan `keyVersion` & algoritme; uji lintas versi tiap rilis. |
@@ -258,6 +260,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 |-------|---------|----------|---------------------|
 | 1.0.0 | 31 Juli 2026 | | Dokumen dibuat berdasarkan implementasi repo `Mobile-Branchless` (React Native/Expo SDK 54). |
 | 1.0.1 | 6 Oktober 2026 | | Tambah BR-006a (kunci login setelah tutup kas), BR-006b (buka ulang kas dari dashboard), BR-021 (approval device); BR-008 saldo efektif; BR-014 sync senyap. |
+| 1.0.2 | 7 Oktober 2026 | | Tambah BR-009a (otorisasi terintegrasi Core Banking, pilih otorisator; termasuk reversal & cetak ulang struk); approval otorisasi di dashboard branchless dihapus. |
 
 ---
 

@@ -41,7 +41,7 @@ tetapi **tidak** menjalankan pembukuan Core Banking.
 | DB lokal | Berkas SQLite `branchless2025.db` berisi `Transaksi`, `LogAktivitas`, `SaldoKas` |
 | Kode lembaga | Identitas BPR/koperasi; menentukan `api_url` yang dipakai aplikasi |
 | `api_url` | Base URL API spesifik lembaga (disimpan di SecureStore) |
-| `DEFAULT_API` | Base URL API pusat (lookup lembaga, OTP, otorisasi, lokasi) |
+| `DEFAULT_API` | Base URL API pusat (lookup lembaga, OTP, lokasi) |
 | `responseData` | Field payload sukses yang **terenkripsi AES** dari server |
 | `keyVersion` | Penanda versi kunci harian untuk derivasi kunci AES |
 | `isSync` | Penanda transaksi sudah terkirim ke server (`0` = tertunda) |
@@ -180,8 +180,10 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | FR-26 | Setoran (offline-first) | `mockSetoranApi()` menulis transaksi ke DB lokal dengan `isSync: 0`, `tipe: "setoran"`; sinkronisasi menyusul. |
 | FR-27 | Penarikan (online-first) | `mockPenarikanApi()` memanggil `POST /transaksi/penarikan` **lebih dulu**; hanya bila sukses transaksi ditulis lokal dengan `isSync: 1`. Gagal → `Promise.reject` agar layar menampilkan error. Server menolak bila nominal melebihi **saldo efektif** = Σ mutasi `tabtrans` + transaksi branchless belum diposting − (`tabung.MINIMUM` + `tabung.SALDO_BLOKIR`). |
 | FR-28 | OTP nasabah | `requestOtpApi()` → `POST /transaksi/otp-request` (`DEFAULT_API`) dengan `{rekening, nominal, userId, apiUrl}`. |
-| FR-29 | Permintaan otorisasi | `requestOtorisasiApi()` → `POST /transaksi/otorisasi-request` dengan `{rekening, nominal, tipe, userId, detail, apiUrl, lembaga}` → `requestId`. |
-| FR-30 | Cek status otorisasi | `checkOtorisasiStatusApi()` → `GET /transaksi/otorisasi-check?request_id=` → `pending`/`approved`/`rejected`. |
+| FR-29 | Permintaan otorisasi | Dipicu bila setoran > `limit_setoran`, penarikan > `limit_penarikan` (dari `user_login`), reversal, atau cetak ulang struk. `OtorisasiModal` memuat daftar otorisator lewat `getOtorisatorListApi()` → `GET /transaksi/otorisator?userId=&tipe=&nominal=` (API lembaga), petugas memilih satu, lalu `requestOtorisasiApi()` → `POST /transaksi/otorisasi-request` `{userId, idOtorisator, tipe, nominal, keterangan}` → `requestId` (= `identifier` di `app_otorisasi` core). Server memvalidasi ulang bahwa otorisator berwenang. |
+| FR-29a | Daftar otorisator | Padanan `home/listUserOtorisasi` core: `sys_daftar_user` dengan `user_code` ∈ `[otorisasi] role_otorisator` (app.ini API lembaga, = `ROLE_OTORISATOR` core), `user_code ≠ 18`, bukan peminta, kolom limit ≥ nominal (`setoran`→`penerimaan_tab`, `penarikan`→`pengeluaran_tab`, `angsuran`→`penerimaan_kre`; `reversal` & `cetak_ulang` tanpa filter limit). Otorisator satu kantor (`UNIT_KERJA`/`KODE_WILAYAH`) didahulukan; bila kosong, semua kantor. |
+| FR-30 | Cek status otorisasi | `checkOtorisasiStatusApi()` → `GET /transaksi/otorisasi-check?request_id=&userId=` tiap 3 detik → `pending`/`approved`/`rejected`/`cancelled` (status core `0`/`1`/`3`/`2`). Disetujui → setoran disimpan, penarikan lanjut OTP nasabah, reversal diproses. Kolom `password` `app_otorisasi` tidak pernah dikirim ke aplikasi. |
+| FR-30a | Batal otorisasi | `cancelOtorisasiApi()` → `POST /transaksi/otorisasi-cancel` mengubah status `0` → `2` (padanan `home/BatalOtorisasi`) saat petugas menekan Batal atau menutup layar, agar tidak tertinggal di notifikasi otorisator. |
 | FR-31 | Rekening koran | `rekeningKoranAPI()` → `GET /mutasi/koran?no_rekening=` → 10 transaksi terakhir (terbaru dulu). Saldo per baris dihitung server **mundur** dari total mutasi `tabtrans` (saldo baris terbaru = saldo akhir); saldo awal struk = saldo baris terakhir − nominalnya. |
 | FR-32 | Reversal tabungan | `updateTransaksiReversal(id)` menandai `isReversal = 1` (tidak menghapus) & mencatat log aktivitas. |
 | FR-33 | Nomor referensi | `generateNoRef()` → `BRP` + timestamp base36 + 4 karakter acak, maksimum 20 karakter. |
@@ -219,7 +221,7 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | FR-50 | Cetak via RawBT | Driver `rawbt`: deep link `rawbt:base64,<payload>`; bila aplikasi tidak terpasang, tawarkan buka Play Store. |
 | FR-51 | Pratinjau struk | `StrukPreviewModal` menampilkan bukti transaksi sebelum dicetak. |
 | FR-52 | Cetak otomatis | Preferensi `auto_print_struk` mencetak langsung setelah transaksi berhasil. |
-| FR-53 | Cetak ulang | `CetakStrukScreen` menampilkan daftar transaksi (terbaru di atas) dengan pencarian nama/rekening/no. ref dan filter jenis (Setoran/Penarikan/Angsuran); ketuk kartu untuk cetak ulang struk, tombol "Cetak Daftar" mencetak daftar + rekap sesuai filter aktif setelah konfirmasi. |
+| FR-53 | Cetak ulang | `CetakStrukScreen` menampilkan daftar transaksi (terbaru di atas) dengan pencarian nama/rekening/no. ref dan filter jenis (Setoran/Penarikan/Angsuran); ketuk kartu → konfirmasi → **otorisasi core** (`OtorisasiModal`, tipe `cetak_ulang`, tanpa filter limit) → struk dicetak ulang; tiap cetak ulang butuh otorisasi baru. Tombol "Cetak Daftar" mencetak daftar + rekap sesuai filter aktif setelah konfirmasi. |
 
 ### 3.9 Pelaporan & Audit
 
@@ -278,8 +280,10 @@ dan interceptor header perangkat + token. Respons dianggap sukses bila `response
 | `/transaksi/sync` | POST | Lembaga | Sinkronisasi batch transaksi |
 | `/transaksi/penarikan` | POST | Lembaga | Penarikan (validasi online) |
 | `/transaksi/otp-request` | POST | Pusat | Kirim OTP ke nasabah |
-| `/transaksi/otorisasi-request` | POST | Pusat | Minta otorisasi supervisor |
-| `/transaksi/otorisasi-check` | GET | Pusat | Cek status otorisasi |
+| `/transaksi/otorisator` | GET | Lembaga | Daftar otorisator core yang berwenang |
+| `/transaksi/otorisasi-request` | POST | Lembaga | Tulis permintaan otorisasi ke `app_otorisasi` core |
+| `/transaksi/otorisasi-check` | GET | Lembaga | Cek status otorisasi di core |
+| `/transaksi/otorisasi-cancel` | POST | Lembaga | Batalkan permintaan yang masih menunggu |
 | `/mutasi/koran` | GET | Lembaga | Rekening koran |
 | `/mutasi` | GET | Lembaga | Mutasi rentang tanggal |
 | `/devices/user/location` | POST | Pusat | Lapor lokasi petugas |
@@ -338,6 +342,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | BR-007 | FR-26, NFR-01 |
 | BR-008 | FR-27 |
 | BR-009 | FR-28, FR-29, FR-30 |
+| BR-009a | FR-29, FR-29a, FR-30, FR-30a |
 | BR-010 | FR-34 |
 | BR-011 | FR-32, FR-36, NFR-02 |
 | BR-012 | FR-04, FR-05, FR-21 |
@@ -358,6 +363,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 |-------|---------|----------|---------------------|
 | 1.0.0 | 31 Juli 2026 | | Dokumen dibuat berdasarkan kode sumber repo `Mobile-Branchless`. |
 | 1.0.1 | 6 Oktober 2026 | | FR-53 diperbarui (pencarian/filter cetak ulang); tambah FR-07a (kode status device 13–16), FR-20a (kunci login setelah tutup kas), FR-20b (buka ulang kas); FR-16/20 lapor status kas; FR-27 saldo efektif; FR-31 saldo rekening koran; FR-37/42 sync senyap & per baris; endpoint `/devices/kas*` di §5.1. |
+| 1.0.2 | 7 Oktober 2026 | | Otorisasi terintegrasi Core Banking (`app_otorisasi`): FR-29/30 diperbarui, tambah FR-29a (daftar otorisator) & FR-30a (batal otorisasi); FR-53 cetak ulang struk wajib otorisasi; endpoint otorisasi pindah dari API pusat ke API lembaga di §5.1; penarikan kini memeriksa `limit_penarikan`. |
 
 ---
 
