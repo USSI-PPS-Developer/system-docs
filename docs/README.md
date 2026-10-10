@@ -8,6 +8,7 @@
 
 | Produk | Kelengkapan | Status |
 |--------|-------------|--------|
+| [API Jamkrida Jateng](products/api-jamkrida-jateng/README.md) | 10/11 | 🟡 Berjalan |
 | [BIRU App](products/biru-app/README.md) | 5/11 | 🟡 Berjalan |
 | [FDS BKK Jateng](products/fds-bkk-jateng/README.md) | 3/11 | 🟡 Berjalan |
 | [Host 2 Host](products/host-2-host/README.md) | 11/11 | ✅ Lengkap |
@@ -24,4 +25,4 @@
 analyst new product "Nama Produk"
 ```
 
-*Terakhir diperbarui: 17 September 2026*
+*Terakhir diperbarui: 10 Oktober 2026*
