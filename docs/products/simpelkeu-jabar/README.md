@@ -12,7 +12,7 @@
 | Platform        | Web (Laravel 8 + Blade, panel admin Metronic, landing publik tema Porto) |
 | Pemilik Bisnis  | Pemerintah Provinsi Jawa Barat — unit pembina BUMD *(nama unit kerja: konfirmasi)* |
 | Pengguna        | Admin Provinsi, operator lembaga (BPR / LKM / Jamkrida / Bank), tamu (*guest*), dan **publik** (landing page) |
-| Kelengkapan Dok | 2/11 (18%) |
+| Kelengkapan Dok | 3/11 (27%) |
 | Terakhir update | 11 Oktober 2026 |
 
 ---
@@ -24,7 +24,7 @@
 | 01 | [📄 BRD — Business Requirement Document](01-brd.md) | 🟡 Draft |
 | 02 | [📐 SRS — Software Requirements Specification](02-srs.md) | 🟡 Draft |
 | 03 | 🔌 API Contract | ⬜ Belum dibuat |
-| 04 | 🗄️ Desain Database | ⬜ Belum dibuat |
+| 04 | [🗄️ Desain Database](04-database-design.md) | 🟡 Draft |
 | 05 | 🎨 Desain UI/UX | ⬜ Belum dibuat |
 | 06 | 🧪 Test Plan | ⬜ Belum dibuat |
 | 07 | ✅ Test Case | ⬜ Belum dibuat |
@@ -84,7 +84,7 @@ selaras** dengan dokumen SDLC di folder ini:
 | `CHANGELOG.md` | Riwayat perubahan format **Before / After / Alasan** (dasar laporan ke Pemprov) | [BRD](01-brd.md) |
 | `AUDIT.md` | Audit keamanan/kualitas 2026-07-19 + status remediasi | [SRS §4](02-srs.md#4-kebutuhan-non-fungsional) |
 | `DEPLOY_CPANEL.md`, `DEPLOY_CHECKLIST.md` | Prosedur rilis ke hosting cPanel | Deployment Guide |
-| `database/sql/*.sql` | Patch skema `cms_*`, `profile_bank_pengurus`, index performa | Desain Database |
+| `database/sql/*.sql` | Patch skema `cms_*`, `profile_bank_pengurus`, index performa | [Desain Database](04-database-design.md) |
 | `routes/web.php` | Daftar route publik vs terproteksi | [SRS §5.1](02-srs.md#51-antarmuka-endpoint-internal) |
 
 > ⚠️ **Bila kode berubah, perbarui kedua sisi.** Penambahan laporan, menu, sheet import,
