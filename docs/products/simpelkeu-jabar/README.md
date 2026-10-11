@@ -12,7 +12,7 @@
 | Platform        | Web (Laravel 8 + Blade, panel admin Metronic, landing publik tema Porto) |
 | Pemilik Bisnis  | Pemerintah Provinsi Jawa Barat — unit pembina BUMD *(nama unit kerja: konfirmasi)* |
 | Pengguna        | Admin Provinsi, operator lembaga (BPR / LKM / Jamkrida / Bank), tamu (*guest*), dan **publik** (landing page) |
-| Kelengkapan Dok | 3/11 (27%) |
+| Kelengkapan Dok | 4/11 (36%) |
 | Terakhir update | 11 Oktober 2026 |
 
 ---
@@ -30,7 +30,7 @@
 | 07 | ✅ Test Case | ⬜ Belum dibuat |
 | 08 | 🔗 SIT Documentation | ⬜ Belum dibuat |
 | 09 | 🧾 UAT | ⬜ Belum dibuat |
-| 10 | 🚀 Deployment Guide | ⬜ Belum dibuat (bahan sudah ada di repo: `DEPLOY_CPANEL.md`, `DEPLOY_CHECKLIST.md`) |
+| 10 | [🚀 Deployment Guide](10-deployment-guide.md) | 🟡 Draft |
 | 11 | 📖 User Manual | ⬜ Belum dibuat |
 
 > **Catatan untuk technical writer.**
@@ -80,10 +80,10 @@ selaras** dengan dokumen SDLC di folder ini:
 | Berkas di repo | Isi | Dokumen SDLC terkait |
 |----------------|-----|----------------------|
 | `CLAUDE.md` | Arsitektur, konvensi, subsistem, gotcha | [SRS](02-srs.md) |
-| `README.md` | Ringkasan produk & instalasi | [BRD](01-brd.md), Deployment Guide |
+| `README.md` | Ringkasan produk & instalasi | [BRD](01-brd.md), [Deployment Guide](10-deployment-guide.md) |
 | `CHANGELOG.md` | Riwayat perubahan format **Before / After / Alasan** (dasar laporan ke Pemprov) | [BRD](01-brd.md) |
 | `AUDIT.md` | Audit keamanan/kualitas 2026-07-19 + status remediasi | [SRS §4](02-srs.md#4-kebutuhan-non-fungsional) |
-| `DEPLOY_CPANEL.md`, `DEPLOY_CHECKLIST.md` | Prosedur rilis ke hosting cPanel | Deployment Guide |
+| `DEPLOY_CPANEL.md`, `DEPLOY_CHECKLIST.md` | Prosedur rilis ke hosting cPanel | [Deployment Guide](10-deployment-guide.md) |
 | `database/sql/*.sql` | Patch skema `cms_*`, `profile_bank_pengurus`, index performa | [Desain Database](04-database-design.md) |
 | `routes/web.php` | Daftar route publik vs terproteksi | [SRS §5.1](02-srs.md#51-antarmuka-endpoint-internal) |
 

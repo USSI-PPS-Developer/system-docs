@@ -17,7 +17,7 @@
 | [IBS Onboarding Backend](products/ibs-onboarding-backend/README.md) | 5/11 | 🟡 Berjalan |
 | [IBS Onboarding Mobile](products/ibs-onboarding-mobile/README.md) | 6/11 | 🟡 Berjalan |
 | [Mobile Branchless](products/mobile-branchless/README.md) | 3/11 | 🟡 Berjalan |
-| [SimpelkeuJabar](products/simpelkeu-jabar/README.md) | 3/11 | 🟡 Berjalan |
+| [SimpelkeuJabar](products/simpelkeu-jabar/README.md) | 4/11 | 🟡 Berjalan |
 
 ---
 
