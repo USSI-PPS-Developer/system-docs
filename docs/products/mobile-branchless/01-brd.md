@@ -117,7 +117,7 @@ didekripsi di klien. Distribusi via **EAS Build** (APK internal).
 | BR-006b | **Admin lembaga dapat membuka ulang kas** yang sudah ditutup dari dashboard, disertai alasan. | Tinggi | Status buka/tutup kas tiap perangkat dilaporkan ke API pusat & terlihat di dashboard; buka ulang tercatat (siapa, kapan, alasan). Saldo kas petugas sebelum tutup kas **dikembalikan otomatis**, tanpa buka kas lagi. |
 | BR-007 | Petugas dapat melayani **setoran tabungan secara offline**. | Wajib | Uang masuk ke petugas — aman ditulis lokal dulu. |
 | BR-008 | **Penarikan wajib divalidasi server** sebelum uang diserahkan. | Wajib | Uang keluar & **saldo efektif** nasabah harus mencukupi: saldo Core + transaksi branchless yang belum diposting − (saldo minimum + saldo blokir). |
-| BR-009 | Penarikan dapat memerlukan **OTP nasabah** dan/atau **otorisasi supervisor**. | Tinggi | `POST /transaksi/otp-request`, `/transaksi/otorisasi-request`. OTP sementara dinonaktifkan sampai API gateway WA lembaga tersedia. |
+| BR-009 | Penarikan dapat memerlukan **OTP nasabah** dan/atau **otorisasi supervisor**. | Tinggi | `POST /transaksi/otp-request`, `/transaksi/otorisasi-request`. OTP dikirim via **WhatsApp** (template `otp_branchless`) ke HP nasabah di core; bila di atas limit, otorisasi lebih dulu baru OTP. |
 | BR-009a | Transaksi di atas **limit petugas di core** (setoran > `sys_daftar_user.penerimaan_tab`, penarikan > `pengeluaran_tab`; limit device dashboard hanya cadangan bila kolom tidak ada) setiap **reversal**, dan setiap **cetak ulang struk** (pencegahan struk ganda / fraud) wajib disetujui **otorisator Core Banking**. Petugas memilih otorisator dari daftar user core yang berwenang. | Wajib | *Single source of truth* dengan core: permintaan masuk ke `app_otorisasi` dan disetujui/ditolak dari menu otorisasi core, sama seperti transaksi teller. Otorisator disaring seperti `listUserOtorisasi` core — role `ROLE_OTORISATOR`, satu kantor didahulukan, dan limit kewenangan (`penerimaan_tab` / `pengeluaran_tab`) ≥ nominal. |
 | BR-010 | Petugas dapat melayani **angsuran kredit**. | Wajib | Alur serupa setoran. |
 | BR-011 | Petugas dapat melakukan **reversal** transaksi keliru. | Tinggi | Ditandai `isReversal`, bukan dihapus — jejak audit terjaga. |
@@ -266,6 +266,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 | 1.0.2 | 7 Oktober 2026 | | Tambah BR-009a (otorisasi terintegrasi Core Banking, pilih otorisator; termasuk reversal & cetak ulang struk); approval otorisasi di dashboard branchless dihapus. |
 | 1.0.3 | 7 Oktober 2026 | | BR-006b: saldo kas dikembalikan saat buka ulang. Tambah BR-004a (buka kas dapat dinonaktifkan per lembaga); kriteria penerimaan buka kas disesuaikan. |
 | 1.0.4 | 7 Oktober 2026 | | Tambah BR-002a (izin login dari `branchless_login_flag` core); BR-009a: limit petugas bersumber dari core. |
+| 1.0.5 | 12 Oktober 2026 | | BR-009: OTP penarikan aktif via WhatsApp gateway. |
 
 ---
 
