@@ -198,6 +198,8 @@ Sore   : pastikan tab Sync bersih ─► Tutup Kas ─► logout otomatis
 
 > **DB master bernama per tanggal** (`dbbranchless_YYMMDD.db`). Berkas kemarin tidak dipakai
 > hari ini — unduh ulang setiap pagi adalah bagian dari prosedur operasional, bukan opsional.
+> **Login ditolak** (biasa & biometrik) selama DB master hari ini belum diunduh; dialog penolakan
+> menyediakan tombol **Unduh**.
 
 ## 7. Ketergantungan Sisi Server
 
@@ -278,6 +280,7 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 | Gejala | Kemungkinan Penyebab | Solusi |
 |--------|----------------------|--------|
 | "API URL belum diatur" | Kode lembaga belum disimpan | Setting → input kode lembaga hingga nama lembaga tampil |
+| "Database nasabah hari ini belum diunduh" saat login | DB master `dbbranchless_<YYMMDD hari ini>.db` belum ada / kosong / tanpa tabel `master_nasabah` | Tekan **Unduh** di dialog (butuh koneksi & kode lembaga tersimpan); bila gagal, cek `GET /db/download/{YYMMDD}` dan worker `generate-master-nasabah` di server lembaga |
 | Pencarian nasabah kosong | DB master belum diunduh / tanggal berbeda | Unduh DB hari ini; nama berkas mengikuti `YYMMDD` |
 | Nasabah ada tapi tak muncul | Filter wilayah kerja (`kode_group`/`kode_kantor`) | Cek profil `user_login`; pastikan nasabah dalam unit kerja petugas |
 | Nasabah tak muncul walau benar | Query mensyaratkan `status = '1'` & `saldo_akhir > 0` | Verifikasi data di Core |
@@ -306,6 +309,7 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 | 1.0.1 | 6 Oktober 2026 | | Prosedur buka ulang kas, checklist migration API pusat V3–V5 & approval device, `api_url` wajib https, catatan kompatibilitas status kas, troubleshooting baru. |
 | 1.0.2 | 7 Oktober 2026 | | Otorisasi pindah ke API lembaga / core (`app_otorisasi`); checklist `[otorisasi] role_otorisator` & limit otorisator core. |
 | 1.0.3 | 7 Oktober 2026 | | Kunci SecureStore `wajib_buka_kas` & `kas_saldo_tutup_<tgl>`; checklist migration API pusat V6 (`lembaga.wajib_buka_kas`). |
+| 1.0.4 | 12 Oktober 2026 | | §6.3 & troubleshooting: login ditolak bila DB master hari ini belum diunduh (CR klien). |
 
 ---
 

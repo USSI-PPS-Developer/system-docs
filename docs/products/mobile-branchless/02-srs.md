@@ -134,13 +134,14 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | FR-03 | Header perangkat | Interceptor axios menyisipkan `X-Device-Id` & `X-Device-Name` pada tiap request. |
 | FR-04 | Unduh DB master | `downloadDataFromAPI()` → `GET /db/download/{YYMMDD}` (`api_url`); simpan ke `cacheDirectory` sebagai `dbbranchless_YYMMDD.db`. |
 | FR-05 | Validasi berkas DB | Setelah unduh, berkas dibuka & diverifikasi memiliki tabel `master_nasabah`; berkas kosong/korup dihapus dan dilaporkan gagal. |
-| FR-06 | Reset instance DB | `resetDBInstance()` dipanggil sebelum mengganti berkas DB agar koneksi lama dilepas. |
+| FR-06 | Reset instance DB | `resetDBInstance()` dipanggil sebelum mengganti berkas DB agar koneksi lama (`dbPromise`) dilepas. |
 
 ### 3.2 Autentikasi & Sesi
 
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
 | FR-07 | Login | `POST /login` (`api_url`) dengan `{username, password, kodeLembaga}`; password di-hash **SHA1(uppercase)** sebelum dikirim. |
+| FR-07c | Wajib DB master hari ini | Sebelum memanggil `POST /login` (biasa & biometrik, setelah cek kunci tutup kas FR-20a), `cekDBMasterHariIni()` (`nasabahApi.ts`) memastikan `dbbranchless_<YYMMDD hari ini>.db` ada, tidak kosong, dan memiliki tabel `master_nasabah`. Bila belum → login ditolak dengan dialog "Database nasabah hari ini belum diunduh" + tombol **Unduh** (menjalankan FR-04). DB tanggal sebelumnya tidak memenuhi syarat. |
 | FR-07a | Pesan status device | Kode dari cek device di API pusat (diteruskan API lembaga) dipetakan ke pesan khusus: `13` device nonaktif, `14` lembaga nonaktif, `15` device menunggu persetujuan Admin USSI, `16` pendaftaran device ditolak. Device hanya dapat login bila `approval_status` = `APPROVED` atau `PENDING_DELETE`. |
 | FR-07b | Izin login & limit dari core | API lembaga membaca `sys_daftar_user` di core saat login: bila kolom `branchless_login_flag` ada dan nilainya ≠ 1 (termasuk NULL), login ditolak kode `17` "User Anda tidak diizinkan login Branchless" — lapis kedua setelah cek device aktif (FR-07a). `limit_setoran` = `penerimaan_tab`, `limit_penarikan` = `pengeluaran_tab` (NULL → 0, artinya setiap transaksi wajib otorisasi). Bila kolom limit tidak ada di core, dipakai limit device dari dashboard. Flag hanya dicek saat login; sesi yang sedang berjalan tidak diputus. |
 | FR-08 | Simpan sesi | Sukses → `user_login` di SecureStore berisi data server + `username`, `password`, `expires` (24 jam). |
@@ -337,7 +338,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | Kebutuhan Bisnis (BRD) | FR / NFR terkait |
 |------------------------|------------------|
 | BR-001 | FR-01 |
-| BR-002 | FR-07 … FR-11 |
+| BR-002 | FR-07 … FR-11 (termasuk FR-07c) |
 | BR-003 | FR-12, NFR-03 |
 | BR-004 | FR-15, FR-16 |
 | BR-005 | FR-17, FR-18 |
@@ -371,6 +372,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | 1.0.4 | 7 Oktober 2026 | | Tambah FR-07b: login ditolak (kode `17`) bila `sys_daftar_user.branchless_login_flag` ≠ 1; limit setoran/penarikan petugas dibaca dari `penerimaan_tab`/`pengeluaran_tab` core (cadangan: limit device dashboard). FR-29 disesuaikan. |
 | 1.0.5 | 7 Oktober 2026 | | §5.1: `/transaksi/otp-request` hanya diteruskan ke `api_url` lembaga terdaftar. |
 | 1.0.6 | 12 Oktober 2026 | | FR-28: OTP penarikan aktif via WhatsApp gateway (mode tes `test_hp`). |
+| 1.0.7 | 12 Oktober 2026 | | Tambah FR-07c: login ditolak bila DB master hari ini belum diunduh (CR klien). |
 
 ---
 

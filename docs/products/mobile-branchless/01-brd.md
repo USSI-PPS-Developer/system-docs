@@ -106,7 +106,7 @@ didekripsi di klien. Distribusi via **EAS Build** (APK internal).
 | ID | Kebutuhan Bisnis | Prioritas | Catatan |
 |----|------------------|-----------|---------|
 | BR-001 | Petugas dapat **mengatur lembaga** lewat kode lembaga. | Wajib | `GET /lembaga/kode/{kode}` (API pusat) → simpan `api_url` lembaga. |
-| BR-002 | Petugas dapat **login** dengan aman, termasuk **biometrik**. | Wajib | `POST /login`; password di-hash SHA1; sesi 24 jam. |
+| BR-002 | Petugas dapat **login** dengan aman, termasuk **biometrik**. | Wajib | `POST /login`; password di-hash SHA1; sesi 24 jam. Login ditolak bila **DB master hari ini belum diunduh** (CR klien) — dialog langsung menawarkan unduh. |
 | BR-002a | Hanya user yang diizinkan **core** yang dapat login Branchless (mis. AO yang dipindah ke teller backoffice diblokir dari core). | Wajib | Dua lapis: device aktif di dashboard **dan** `sys_daftar_user.branchless_login_flag = 1` di core. |
 | BR-003 | Sesi **auto-logout saat idle** 5 menit. | Wajib | Perangkat dibawa keluar kantor — risiko akses tak sah. |
 | BR-004 | Petugas **wajib membuka kas** sebelum bertransaksi. | Wajib | Dikunci per tanggal; tanpa buka kas, menu transaksi tidak dapat diakses. Berlaku untuk lembaga yang mengaktifkan setting *Wajib buka kas* (BR-004a). |
@@ -222,7 +222,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 | RB-002 | Perangkat hilang/dicuri saat membawa data nasabah | Kebocoran data nasabah | Auto-logout idle 5 menit, sesi 24 jam, data lokal ter-*encode*, `deviceId` terdaftar. |
 | RB-003 | Penarikan dilayani padahal saldo nasabah tidak cukup | Kerugian lembaga | Penarikan **wajib divalidasi server** sebelum uang diserahkan. |
 | RB-004 | Petugas menyalahgunakan uang setoran nasabah | Fraud, kerugian & reputasi | Buku kas berjalan, log aktivitas, struk untuk nasabah, pemantauan lokasi. |
-| RB-005 | DB master usang (tidak diunduh ulang) | Nasabah baru tidak ditemukan, data keliru | Nama berkas per tanggal memaksa unduh harian; tombol Unduh DB di layar login. |
+| RB-005 | DB master usang (tidak diunduh ulang) | Nasabah baru tidak ditemukan, data keliru | Nama berkas per tanggal memaksa unduh harian; tombol Unduh DB di layar login; **login ditolak bila DB master hari ini belum diunduh** (CR klien). |
 | RB-006 | Perangkat tanpa sinyal seharian | Antrean sinkronisasi menumpuk, tutup kas tertahan | Sinkronisasi otomatis saat sinyal kembali + layar sinkronisasi manual. |
 | RB-007 | Printer gagal/kehabisan baterai | Nasabah tidak menerima bukti | Fallback **RawBT**; struk dapat dicetak ulang dari daftar transaksi (dengan otorisasi). |
 | RB-008 | Transaksi ganda akibat petugas menekan dua kali | Selisih pembukuan | Penjagaan `loading` di tiap handler; `noRef` unik per transaksi. |
@@ -236,6 +236,8 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 - Petugas dapat **mengatur lembaga** dari kode lembaga dan mengunduh **DB master** harian.
 - Petugas dapat **login** (biasa & biometrik); sesi berakhir otomatis setelah 24 jam atau
   5 menit tanpa aktivitas.
+- **Login (biasa & biometrik) ditolak** bila DB master hari ini belum diunduh, dengan pesan
+  yang menawarkan unduh DB; setelah unduh berhasil, login dapat dilanjutkan.
 - Aplikasi **memaksa buka kas** sebelum transaksi hari itu dapat dilakukan — kecuali lembaga
   menonaktifkan setting *Wajib buka kas*, maka buka kas dilewati otomatis.
 - **Setoran & angsuran** berhasil diselesaikan **dalam kondisi tanpa sinyal**, tersimpan
@@ -267,6 +269,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 | 1.0.3 | 7 Oktober 2026 | | BR-006b: saldo kas dikembalikan saat buka ulang. Tambah BR-004a (buka kas dapat dinonaktifkan per lembaga); kriteria penerimaan buka kas disesuaikan. |
 | 1.0.4 | 7 Oktober 2026 | | Tambah BR-002a (izin login dari `branchless_login_flag` core); BR-009a: limit petugas bersumber dari core. |
 | 1.0.5 | 12 Oktober 2026 | | BR-009: OTP penarikan aktif via WhatsApp gateway. |
+| 1.0.6 | 12 Oktober 2026 | | BR-002, RB-005, §9: login wajib DB master hari ini sudah diunduh (CR klien). |
 
 ---
 
