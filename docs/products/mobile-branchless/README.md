@@ -12,8 +12,8 @@
 | Package / Bundle | `com.lt4.mobilebranchless` |
 | Pengguna        | **Petugas lapangan / kolektor** (bukan nasabah) |
 | Produk terkait  | [IBS Onboarding Mobile](../ibs-onboarding-mobile/README.md) — aplikasi sisi nasabah |
-| Kelengkapan Dok | 3/11 (27%) |
-| Terakhir update | 31 Juli 2026    |
+| Kelengkapan Dok | 4/11 (36%) |
+| Terakhir update | 16 November 2026 |
 
 ---
 
@@ -24,7 +24,7 @@
 | 01 | [📄 BRD — Business Requirement Document](01-brd.md) | 🟡 Draft |
 | 02 | [📐 SRS — Software Requirements Specification](02-srs.md) | 🟡 Draft |
 | 03 | 🔌 API Contract | ⬜ Belum dibuat |
-| 04 | 🗄️ Desain Database | ⬜ Belum dibuat |
+| 04 | [🗄️ Desain Database](04-database-design.md) | 🟡 Draft |
 | 05 | 🎨 Desain UI/UX | ⬜ Belum dibuat |
 | 06 | 🧪 Test Plan | ⬜ Belum dibuat |
 | 07 | ✅ Test Case | ⬜ Belum dibuat |
@@ -35,11 +35,12 @@
 
 > **Catatan pemilihan dokumen.** Produk ini adalah **mobile client petugas** dengan
 > karakteristik yang membedakannya dari klien mobile lain di portofolio:
-> - **04 — Desain Database** **relevan dan perlu dibuat** (berbeda dari `IBS Onboarding
->   Mobile` yang N/A). Aplikasi ini **punya basis data lokal**: `branchless2025.db`
+> - **04 — Desain Database** **relevan** (berbeda dari `IBS Onboarding Mobile` yang N/A) dan
+>   mencakup **tiga lapis**: SQLite di perangkat, database API pusat (`backend-branchless`),
+>   dan database lembaga/Core Banking (`backend-client-branchless`). Aplikasi ini **punya basis data lokal**: `branchless2025.db`
 >   (`Transaksi`, `LogAktivitas`, `SaldoKas` + tabel `*Backup`) ditulis aplikasi, ditambah
 >   `dbbranchless_YYMMDD.db` (`master_nasabah`) yang diunduh per tanggal dan bersifat
->   read-only. Skema ringkasnya sudah tercantum di [SRS §5.5](02-srs.md).
+>   read-only. Rinciannya di [Desain Database](04-database-design.md); ringkasan di [SRS §5.5](02-srs.md).
 > - **10 — Deployment Guide** berbentuk **build & distribusi EAS**, bukan deploy server —
 >   plus **prosedur penyiapan perangkat petugas** (kode lembaga, unduh DB, pasangkan printer)
 >   yang wajib dilakukan sebelum perangkat dipakai di lapangan.

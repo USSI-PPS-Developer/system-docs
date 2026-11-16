@@ -330,8 +330,11 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | `TransaksiBackup`, `LogAktivitasBackup`, `SaldoKasBackup` | — | Salinan harian, dibersihkan > 7 hari |
 
 **`dbbranchless_YYMMDD.db`** — diunduh dari server, read-only: tabel `master_nasabah`
-(`no_rekening`, `nama_nasabah`, `alamat`, `nama_produk`, `saldo_akhir`, `status`,
-`kode_group1..3`, `kode_kantor`).
+(`no_rekening`, `kode_produk`, `nama_produk`, `nama_nasabah`, `alamat`, `kode_kantor`,
+`kode_group1..3`, `saldo_akhir`).
+
+> Rincian kolom, skema database API pusat & lembaga, serta relasi antar-lapis ada di
+> [Desain Database](04-database-design.md).
 
 ## 6. Matriks Ketertelusuran (Ringkas)
 
@@ -373,6 +376,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | 1.0.5 | 7 Oktober 2026 | | §5.1: `/transaksi/otp-request` hanya diteruskan ke `api_url` lembaga terdaftar. |
 | 1.0.6 | 12 Oktober 2026 | | FR-28: OTP penarikan aktif via WhatsApp gateway (mode tes `test_hp`). |
 | 1.0.7 | 12 Oktober 2026 | | Tambah FR-07c: login ditolak bila DB master hari ini belum diunduh (CR klien). |
+| 1.0.8 | 16 November 2026 | | §5.5: daftar kolom `master_nasabah` dikoreksi (tidak ada kolom `status`; ada `kode_produk`) dan dirujuk ke dokumen Desain Database. |
 
 ---
 
