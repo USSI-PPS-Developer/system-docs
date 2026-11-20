@@ -132,7 +132,7 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | FR-01 | Atur lembaga | Layar `LoginScreen` → modal `setting`: input kode lembaga → `GET /lembaga/kode/{kode}` (`DEFAULT_API`); simpan `kode_lembaga`, `nama_lembaga`, `alamat_lembaga`, `api_url`, `wajib_buka_kas` di SecureStore. Setting `wajib_buka_kas` diambil ulang tiap login berhasil (`refreshSettingKasLembaga()`, maks. 5 detik; gagal → nilai tersimpan dipakai). |
 | FR-02 | Identitas perangkat | `getDeviceInfo()` → `deviceId` (Android ID / iOS IDFV), fallback UUID disimpan sebagai `fallback_device_id`; disimpan juga di store Zustand `useDeviceInfoStore`. |
 | FR-03 | Header perangkat | Interceptor axios menyisipkan `X-Device-Id` & `X-Device-Name` pada tiap request. |
-| FR-04 | Unduh DB master | `downloadDataFromAPI()` → `GET /db/download/{YYMMDD}` (`api_url`); simpan ke `cacheDirectory` sebagai `dbbranchless_YYMMDD.db`. |
+| FR-04 | Unduh DB master | `downloadDataFromAPI()` → `GET /db/download/{YYMMDD}` (`api_url`) dengan header `X-Device-Id`; simpan ke `cacheDirectory` sebagai `dbbranchless_YYMMDD.db`. Bila device punya **kode kantor** di dashboard, berkas hanya berisi nasabah kantor tersebut (`tabung.kode_kantor`); kosong = semua kantor. Validasi berkas memakai koneksi SQLite terpisah (`useNewConnection`) yang selalu ditutup. |
 | FR-05 | Validasi berkas DB | Setelah unduh, berkas dibuka & diverifikasi memiliki tabel `master_nasabah`; berkas kosong/korup dihapus dan dilaporkan gagal. |
 | FR-06 | Reset instance DB | `resetDBInstance()` dipanggil sebelum mengganti berkas DB agar koneksi lama (`dbPromise`) dilepas. |
 
@@ -279,7 +279,7 @@ dan interceptor header perangkat + token. Respons dianggap sukses bila `response
 |----------|--------|------|--------|
 | `/lembaga/kode/{kode}` | GET | Pusat | Detail lembaga + `api_url` + `wajib_buka_kas` |
 | `/login` | POST | Lembaga | Login petugas |
-| `/db/download/{YYMMDD}` | GET | Lembaga | Unduh berkas SQLite master |
+| `/db/download/{YYMMDD}` | GET | Lembaga | Unduh berkas SQLite master. Tanggal wajib `yyMMdd` valid (selain itu `400`). Header `X-Device-Id` → lembaga mengambil kode kantor device dari pusat (`GET /devices/kantor/{deviceUuid}`) dan menyajikan `dbbranchless_YYMMDD_<kantor>.db`; tanpa header / kantor kosong / pusat tak terjangkau → semua kantor. |
 | `/worker/generate-master-nasabah` | GET | Lembaga | Picu pembangkitan DB master |
 | `/transaksi/sync` | POST | Lembaga | Sinkronisasi batch transaksi |
 | `/transaksi/penarikan` | POST | Lembaga | Penarikan (validasi online) |
@@ -377,6 +377,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | 1.0.6 | 12 Oktober 2026 | | FR-28: OTP penarikan aktif via WhatsApp gateway (mode tes `test_hp`). |
 | 1.0.7 | 12 Oktober 2026 | | Tambah FR-07c: login ditolak bila DB master hari ini belum diunduh (CR klien). |
 | 1.0.8 | 16 November 2026 | | §5.5: daftar kolom `master_nasabah` dikoreksi (tidak ada kolom `status`; ada `kode_produk`) dan dirujuk ke dokumen Desain Database. |
+| 1.0.9 | 20 November 2026 | | FR-04 & §5.1: unduh DB master per kode kantor device (header `X-Device-Id`), validasi tanggal `yyMMdd`. |
 
 ---
 

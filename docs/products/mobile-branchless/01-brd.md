@@ -121,7 +121,7 @@ didekripsi di klien. Distribusi via **EAS Build** (APK internal).
 | BR-009a | Transaksi di atas **limit petugas di core** (setoran > `sys_daftar_user.penerimaan_tab`, penarikan > `pengeluaran_tab`; limit device dashboard hanya cadangan bila kolom tidak ada) setiap **reversal**, dan setiap **cetak ulang struk** (pencegahan struk ganda / fraud) wajib disetujui **otorisator Core Banking**. Petugas memilih otorisator dari daftar user core yang berwenang. | Wajib | *Single source of truth* dengan core: permintaan masuk ke `app_otorisasi` dan disetujui/ditolak dari menu otorisasi core, sama seperti transaksi teller. Otorisator disaring seperti `listUserOtorisasi` core — role `ROLE_OTORISATOR`, satu kantor didahulukan, dan limit kewenangan (`penerimaan_tab` / `pengeluaran_tab`) ≥ nominal. |
 | BR-010 | Petugas dapat melayani **angsuran kredit**. | Wajib | Alur serupa setoran. |
 | BR-011 | Petugas dapat melakukan **reversal** transaksi keliru. | Tinggi | Ditandai `isReversal`, bukan dihapus — jejak audit terjaga. |
-| BR-012 | Petugas dapat **mencari nasabah tanpa koneksi**. | Wajib | Dari berkas SQLite master yang diunduh. |
+| BR-012 | Petugas dapat **mencari nasabah tanpa koneksi**. | Wajib | Dari berkas SQLite master yang diunduh. Bila admin mengisi **kode kantor** device di dashboard, berkas hanya berisi nasabah kantor tersebut (kosong = semua kantor). |
 | BR-013 | Pencarian nasabah **dibatasi wilayah kerja petugas**. | Wajib | Filter `kode_group1..3` & `kode_kantor` dari profil login. |
 | BR-014 | Transaksi tertunda **tersinkron otomatis** saat online. | Wajib | Interval 10 detik sejak aplikasi dibuka + deteksi konektivitas; berjalan senyap tanpa dialog agar tidak mengganggu petugas. |
 | BR-015 | Nasabah menerima **struk tercetak** sebagai bukti sah. | Wajib | ESC/POS Bluetooth; nomor rekening di-*mask*. |
@@ -270,6 +270,7 @@ Buka kas ──► saldo awal   Cari nasabah (SQLite lokal)      Tutup kas
 | 1.0.4 | 7 Oktober 2026 | | Tambah BR-002a (izin login dari `branchless_login_flag` core); BR-009a: limit petugas bersumber dari core. |
 | 1.0.5 | 12 Oktober 2026 | | BR-009: OTP penarikan aktif via WhatsApp gateway. |
 | 1.0.6 | 12 Oktober 2026 | | BR-002, RB-005, §9: login wajib DB master hari ini sudah diunduh (CR klien). |
+| 1.0.7 | 20 November 2026 | | BR-012: DB master yang diunduh dibatasi per kode kantor device (diatur di dashboard). |
 
 ---
 
