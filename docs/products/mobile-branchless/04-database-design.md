@@ -258,6 +258,7 @@ MySQL 8.0, InnoDB, `utf8mb4_0900_ai_ci`.
 | 18 | `updated_at` | `TIMESTAMP` | NULL | `CURRENT_TIMESTAMP ON UPDATE` | |
 | 19 | `approval_status` | `VARCHAR(20)` | NOT NULL | `APPROVED` | `APPROVED` / `PENDING_REGISTER` / `PENDING_DELETE` / `REJECTED`. |
 | 20 | `kode_kantor` | `VARCHAR(10)` | NULL | | `KODE_KANTOR` core (`app_kode_kantor`). Membatasi isi DB master yang diunduh device ke nasabah kantor ini; NULL = semua kantor. Migrasi `V9`. |
+| 21 | `jenis_perangkat` | `VARCHAR(10)` | NULL | | `HP` / `MPOS`, dipilih di form device dashboard (wajib saat simpan dari dashboard; NULL = device lama belum diisi). Migrasi `V10`. |
 
 **Index:** `PRIMARY (id)`, `fk_device_lembaga (lembaga_id)` · **FK:** `fk_device_lembaga`: `lembaga_id` → `lembaga(id)`.
 
@@ -677,6 +678,7 @@ CREATE TABLE devices (
   kode_group4 VARCHAR(10) NULL,
   kode_group5 VARCHAR(10) NULL,
   kode_kantor VARCHAR(10) NULL,
+  jenis_perangkat VARCHAR(10) NULL,
   limit_setoran DECIMAL(18,2) NOT NULL DEFAULT 0.00,
   limit_penarikan DECIMAL(18,2) NOT NULL DEFAULT 0.00,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
@@ -775,6 +777,7 @@ instalasi lembaga baru tidak berbeda dari yang berjalan.
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 November 2026 | | Dokumen dibuat dari kode `Mobile-Branchless`, `backend-branchless`, `backend-client-branchless` dan `information_schema` database development (pusat, core, core_sys). |
 | 1.0.1 | 20 November 2026 | | `devices.kode_kantor` (migrasi V9); DB master per kantor di §2.2. |
+| 1.0.2 | 20 November 2026 | | `devices.jenis_perangkat` HP/MPOS (migrasi V10). |
 
 ---
 
