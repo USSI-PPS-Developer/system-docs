@@ -172,7 +172,7 @@ Kode: **FR-xx**. Referensi berkas menunjuk ke repo `Mobile-Branchless`.
 | ID | Kebutuhan | Detail |
 |----|-----------|--------|
 | FR-21 | Cari nasabah offline | `cariNasabah(query)` pada DB master: `no_rekening LIKE ? OR nama_nasabah LIKE ?`, `status = '1'`, `saldo_akhir > 0`, `LIMIT 5`. |
-| FR-22 | Filter wilayah kerja | Query ditambah filter dinamis `kode_group1`, `kode_group2`, `kode_group3`, `kode_kantor` dari `user_login`. |
+| FR-22 | Filter wilayah kerja | Query ditambah filter dinamis `kode_group1`, `kode_group2`, `kode_group3`, `kode_kantor` dari `user_login`. Nilai group bisa berisi beberapa kode dipisah koma (diatur multiselect di dashboard) → filter `kode_groupN IN (...)`; kosong = tidak dibatasi. |
 | FR-23 | Dekode kolom nasabah | Kolom `no_rekening`, `nama`, `alamat` di-*decode* sebelum ditampilkan. |
 | FR-24 | Debounce & retry | Pencarian di-*debounce* (`NasabahSearchBox`); error `prepareAsync`/`NullPointerException` memicu reset instance DB dan satu kali percobaan ulang. |
 | FR-25 | Pindai QR | `expo-camera` via `QRScannerModal`; hasil scan mengisi nomor rekening. |
@@ -378,6 +378,7 @@ lodash. Layanan eksternal: aplikasi **RawBT** (opsional, jalur cetak cadangan).
 | 1.0.7 | 12 Oktober 2026 | | Tambah FR-07c: login ditolak bila DB master hari ini belum diunduh (CR klien). |
 | 1.0.8 | 16 November 2026 | | §5.5: daftar kolom `master_nasabah` dikoreksi (tidak ada kolom `status`; ada `kode_produk`) dan dirujuk ke dokumen Desain Database. |
 | 1.0.9 | 20 November 2026 | | FR-04 & §5.1: unduh DB master per kode kantor device (header `X-Device-Id`), validasi tanggal `yyMMdd`. |
+| 1.0.10 | 20 November 2026 | | FR-22: kode group device multi-nilai (filter `IN`). |
 
 ---
 

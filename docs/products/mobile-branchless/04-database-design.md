@@ -251,7 +251,7 @@ MySQL 8.0, InnoDB, `utf8mb4_0900_ai_ci`.
 | 7 | `app_version` | `VARCHAR(50)` | NULL | | |
 | 8 | `last_login_at` | `DATETIME` | NULL | | Diperbarui backend lembaga saat login sukses. |
 | 9 | `is_active` | `TINYINT(1)` | NULL | `1` | |
-| 10–14 | `kode_group1` … `kode_group5` | `VARCHAR(10)` | NULL | | Filter nasabah untuk device ini (mobile memakai 1–3). |
+| 10–14 | `kode_group1` … `kode_group5` | `VARCHAR(2000)` | NULL | | Filter nasabah untuk device ini (mobile memakai 1–3). Bisa **lebih dari satu kode, dipisah koma** (multiselect di dashboard dari `tab_kode_group1..5` core per `kode_kantor`); mobile memfilter `IN (...)`. Kosong = tidak dibatasi. Migrasi `V11`. |
 | 15 | `limit_setoran` | `DECIMAL(18,2)` | NOT NULL | `0.00` | **Cadangan** — dipakai hanya bila kolom limit core tidak ada. |
 | 16 | `limit_penarikan` | `DECIMAL(18,2)` | NOT NULL | `0.00` | Idem. |
 | 17 | `created_at` | `TIMESTAMP` | NULL | `CURRENT_TIMESTAMP` | |
@@ -672,11 +672,11 @@ CREATE TABLE devices (
   app_version VARCHAR(50) NULL,
   last_login_at DATETIME NULL,
   is_active TINYINT(1) DEFAULT 1,
-  kode_group1 VARCHAR(10) NULL,
-  kode_group2 VARCHAR(10) NULL,
-  kode_group3 VARCHAR(10) NULL,
-  kode_group4 VARCHAR(10) NULL,
-  kode_group5 VARCHAR(10) NULL,
+  kode_group1 VARCHAR(2000) NULL,
+  kode_group2 VARCHAR(2000) NULL,
+  kode_group3 VARCHAR(2000) NULL,
+  kode_group4 VARCHAR(2000) NULL,
+  kode_group5 VARCHAR(2000) NULL,
   kode_kantor VARCHAR(10) NULL,
   jenis_perangkat VARCHAR(10) NULL,
   limit_setoran DECIMAL(18,2) NOT NULL DEFAULT 0.00,
@@ -778,6 +778,7 @@ instalasi lembaga baru tidak berbeda dari yang berjalan.
 | 1.0.0 | 16 November 2026 | | Dokumen dibuat dari kode `Mobile-Branchless`, `backend-branchless`, `backend-client-branchless` dan `information_schema` database development (pusat, core, core_sys). |
 | 1.0.1 | 20 November 2026 | | `devices.kode_kantor` (migrasi V9); DB master per kantor di §2.2. |
 | 1.0.2 | 20 November 2026 | | `devices.jenis_perangkat` HP/MPOS (migrasi V10). |
+| 1.0.3 | 20 November 2026 | | `devices.kode_group1..5` multi-kode dipisah koma, `VARCHAR(2000)` (migrasi V11); sumber pilihan `tab_kode_group1..5` core. |
 
 ---
 
