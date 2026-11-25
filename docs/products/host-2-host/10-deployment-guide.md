@@ -103,6 +103,10 @@ sehingga file eksternal menimpa nilai default. **Isi secret di sini, bukan di da
 | Rekap | `rekap.admin-user-ids` | `U001,U050` | Allowlist user_id HQ/admin. Kosong = semua akses rekap ditolak. |
 | Isolasi | `isolation.hq-user-ids` | `U001` | Allowlist user_id yang bypass tenant isolation. Kosong = tidak ada HQ. |
 | Tabungan | `tabung.minimum-editor-user-ids` | `U001,U050` | Allowlist user_id yang boleh mengubah saldo minimum (`POST /api/v1/tabungan/update-saldo-minimum`). **Kosong = semua ditolak** (fail-closed). Alur ini tanpa maker-checker, jadi allowlist ini + jejak audit `api_tab_minimum_change` adalah kontrolnya. |
+| Notifikasi error (Mobile API) | `cbs-notify.enabled` | `false` | Opsional. `true` = error sistem (500, Redis 503) dikirim ke *CBS Error Notification API* Mobile API. Konfigurasi salah **tidak** menggagalkan start — fitur mati dan log berisi `CBS error notification DIMATIKAN`. |
+| | `cbs-notify.url` | `https://<listener>/index.php/cbs_notify/error` | URL listener dari tim Mobile API; wajib `https://`. URL yang ada saat ini adalah environment **development**; URL & kredensial produksi baru diterbitkan setelah uji dev selesai. IP keluar server **wajib** didaftarkan ke whitelist Mobile API (tanpa itu listener menjawab 403 dan log berisi petunjuk whitelist). Listener ini khusus BPR Sentosa — aktifkan hanya di instalasi Sentosa. |
+| | `cbs-notify.public-key` / `cbs-notify.public-key-path` | `MIIBojANBgkq...` / `/config/cbs_notify_public.pem` | Public key RSA Mobile API (X.509/SPKI, ≥ 2048 bit). Inline (Base64 satu baris) diutamakan; bila memakai path, file harus di-mount ke container. |
+| | `cbs-notify.hmac-secret` | `***` | Secret HMAC dari Mobile API, minimal 32 karakter. Satu secret & public key bersama untuk semua BPR. Secret dirotasi sebelum go-live produksi. Jangan dikirim lewat chat. |
 | Timezone | `app.timezone` | `Asia/Jakarta` | Timezone default JVM (WIB). Menentukan tanggal transaksi. Zona tidak valid = aplikasi **gagal start**. Lihat §3.3. |
 | | `spring.jackson.time-zone` | `Asia/Jakarta` | Serialisasi tanggal di response JSON. |
 | | `spring.jpa.properties.hibernate.jdbc.time_zone` | `Asia/Jakarta` | Zona timestamp JDBC dari Hibernate. |
@@ -178,10 +182,13 @@ cp application.properties.example application.properties   # lalu edit
 mkdir -p logs
 
 # 4. Jalankan patch skema DB (WAJIB — ddl-auto=none) pada DB core/sys yang sesuai:
+#    - patch_add_kuitansi_id.sql             (WAJIB: kolom kuitansi_id di tabtrans/transaksi_master/deptrans/kretrans;
+#                                             idempotent; di luar jam operasional, backup dulu)
 #    - patch_api_login_log_status_widen.sql  (WAJIB: kolom status VARCHAR(20))
 #    - patch_dep_produk_is_custom_rate.sql   (WAJIB bila memakai deposito special rate: kolom is_custom_rate)
 #    - patch_tab_campaign_saldo_minimum.sql  (WAJIB build 5 Agu 2026+: tabel api_tab_campaign & api_tab_minimum_change)
 #    - patch_get_next_id_atomic.sql          (disarankan; perlu review IBS lebih dulu)
+mysql -h <db-host> -u <user> -p dbcore < database/patches/patch_add_kuitansi_id.sql
 mysql -h <db-host> -u <user> -p dbcore < database/patches/patch_api_login_log_status_widen.sql
 mysql -h <db-host> -u <user> -p dbcore < database/patches/patch_dep_produk_is_custom_rate.sql
 mysql -h <db-host> -u <user> -p dbcore < database/patches/patch_tab_campaign_saldo_minimum.sql
@@ -297,6 +304,7 @@ curl -s http://localhost:8080/actuator/health
 - [ ] Swagger UI dapat diakses: `http://<host>:8080/swagger-ui.html`.
 - [ ] Koneksi DB primary & sys OK (tidak ada error datasource di log; login mengembalikan token).
 - [ ] Koneksi Redis OK (endpoint transaksional tidak balas `503`/`90`).
+- [ ] Patch `patch_add_kuitansi_id.sql` sudah diterapkan: `SELECT table_name FROM information_schema.columns WHERE table_schema=DATABASE() AND column_name='kuitansi_id';` memuat `tabtrans`, `transaksi_master`, `deptrans`, `kretrans` (tanpa ini semua transaksi balas `96`).
 - [ ] Patch `patch_api_login_log_status_widen.sql` sudah diterapkan (login rate-limit tidak 500).
 - [ ] Patch `patch_dep_produk_is_custom_rate.sql` sudah diterapkan (registrasi deposito special rate & `GET /deposito/produk-spesial-rate` tidak 500).
 - [ ] Patch `patch_tab_campaign_saldo_minimum.sql` sudah diterapkan (`SHOW TABLES LIKE 'api_tab_%';` menampilkan `api_tab_campaign` & `api_tab_minimum_change`) dan — bila fitur dipakai — `api_tab_campaign` sudah berisi campaign aktif.
@@ -348,6 +356,9 @@ docker compose up -d
 |-------|---------|----------|---------------------|
 | 1.0.0 | 16 Juli 2026 | | Dokumen dibuat (metode Docker Compose + Dockerfile) |
 | 1.1.0 | 16 Juli 2026 | | Tambah patch wajib `patch_dep_produk_is_custom_rate.sql` (deposito special rate) ke langkah patch DB & checklist. |
+| 1.5.1 | 25 November 2026 | | §3.1 `cbs-notify.*`: URL saat ini = dev, whitelist IP keluar, key/secret bersama semua BPR, rotasi secret sebelum produksi (jawaban QnA Mobile API). |
+| 1.5.0 | 25 November 2026 | | §3.1: properti opsional `cbs-notify.*` (notifikasi error sistem ke *CBS Error Notification API* Mobile API) — default mati, konfigurasi salah tidak menggagalkan start. |
+| 1.4.4 | 20 November 2026 | | Tambah patch wajib `patch_add_kuitansi_id.sql` (kolom `kuitansi_id` + index di `tabtrans`/`transaksi_master`/`deptrans`/`kretrans`, idempotent) ke langkah patch DB & checklist. Tanpa patch ini semua transaksi gagal `96` (kasus BPR SKB). |
 | 1.4.3 | 6 Agustus 2026 | | Detail health di-gate dengan key monitoring: `/actuator/health` tetap anonim-accessible (status saja) sementara blok `components` (db/redis/diskSpace) hanya untuk pemanggil ber-`X-MONITORING-KEY` (role `MONITORING`); properti baru `management.endpoint.health.roles=MONITORING` pada tabel konfigurasi + catatan §2 (kartu dashboard `UNKNOWN` = perbaiki key, bukan `show-details=always`). |
 | 1.4.2 | 6 Agustus 2026 | | §2 diperjelas: `API_MONITORING_KEY` dashboard `health-ui-mcs` sekarang di-*generate* ke `/config.js` saat container start dari env `MONITORING_API_KEY` (bukan file yang di-commit) — key tidak masuk git/image, rotasi = restart tanpa rebuild; ditegaskan kembali bahwa key SPA selalu terbaca di DevTools sehingga pembatasan jaringan tetap kontrol utama. Checklist `monitoring.api-key` dilengkapi perintah verifikasi dari sisi dashboard & API. |
 | 1.4.1 | 6 Agustus 2026 | | Langkah 4b memakai seeder siap pakai `seed_api_tab_campaign.sql` (campaign bebas saldo minimum produk 201–204, `saldo_minimum` 0, semua kantor, 2026-08-01 s/d 2026-09-30, `dibuat_oleh` USSI / `disetujui_oleh` B Eko Prasetyo; idempotent, `no_memo` placeholder harus diganti memo BPR asli) + cara menghentikan campaign (`is_active = 0`, bukan `DELETE`) dan satu item checklist verifikasi baris campaign. |

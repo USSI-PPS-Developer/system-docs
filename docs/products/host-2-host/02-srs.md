@@ -130,7 +130,7 @@ Karakteristik arsitektural penting:
 | FR-010a | Upload foto & tanda tangan nasabah | Menyimpan foto dan/atau tanda tangan nasabah existing (`POST /nasabah/upload-media`); payload base64 → kolom LONGBLOB, minimal satu media, field kosong tidak menimpa data lama, office-scoped. | Sedang | BR-012 |
 | FR-011 | Registrasi & inquiry tabungan | Registrasi rekening, pencarian, inquiry saldo, daftar mutasi. Saldo minimum rekening baru diambil dari campaign yang berlaku (bila ada), jika tidak dari default produk. | Wajib | BR-012, BR-019 |
 | FR-011a | Update saldo minimum tabungan (campaign) | Mengubah saldo minimum rekening **existing** (`POST /tabungan/update-saldo-minimum`): `aksi=CAMPAIGN` (nilai dari master campaign, mis. 0) atau `aksi=DEFAULT_PRODUK` (kembali ke default produk). Payload **tanpa field nominal**; wajib `alasan`; setiap perubahan merekam nilai asal & baru ke `api_tab_minimum_change`; hanya user pada allowlist `tabung.minimum-editor-user-ids`; office-scoped. | Wajib | BR-019..BR-022 |
-| FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan (seluruh angsuran belum lunas hingga tanggal inquiry), saldo, daftar. | Wajib | BR-012 |
+| FR-012 | Registrasi & inquiry kredit | Registrasi pinjaman, jadwal angsuran, tagihan (seluruh angsuran belum lunas hingga tanggal inquiry), saldo (termasuk provisi, adm lainnya, persen denda), daftar, dan detail rekening (`/detail`: data registrasi, potongan, estimasi dana diterima, status pencairan, jadwal — tersedia sebelum pencairan). | Wajib | BR-012 |
 | FR-012a | Registrasi kredit via *loan style* (M-Pay) | Registrasi kredit (`POST /pinjaman/registrasi`) menerima `loanStyleId` **opsional** merujuk catalog `api_loan_style` (kombinasi nominal/tenor M-Pay yang disetujui bank). Bila diisi, `typeKredit`/`jmlPinjaman`/`jmlAngsuran`/`satuanWaktuAngsuran` diturunkan sistem dari catalog (nilai kiriman client untuk field tersebut diabaikan); bila kosong, alur registrasi lama tidak berubah. `GET /pinjaman/loan-style` (opsional filter `kodeProduk`) memuat daftar catalog aktif untuk dropdown, dipakai client **sebelum** registrasi. | Wajib | BR-012 |
 | FR-013 | Registrasi & inquiry deposito | Registrasi deposito — validasi `jkw` bercabang tiga menurut klasifikasi produk (`dep_produk.kode_jenis`): produk bulanan (aturan per-produk lama), produk *special rate* (`sukuBunga` wajib & `jkw` 1/3/6/12), produk **On Call** (`jkw` 7 atau 14 hari, tenor harian) — inquiry saldo, dan daftar produk *special rate* (`GET /deposito/produk-spesial-rate`). | Wajib | BR-012, BR-025 |
 | FR-014 | Transaksi tabungan | Posting setoran/penarikan/transfer (tipe D1–D3, T1–T4). | Wajib | BR-006..BR-010 |
@@ -144,6 +144,7 @@ Karakteristik arsitektural penting:
 | FR-022 | Monitoring log API | Daftar/detail/ekspor CSV log API, key-gated. | Sedang | BR-014, BR-015 |
 | FR-023 | Idempotency & rate limit | Menegakkan `X-IDEMPOTENCY-KEY` (reservasi atomik) & batas laju. | Wajib | BR-006, BR-007, BR-016 |
 | FR-024 | Tenant isolation | Menegakkan `kode_kantor` pada setiap endpoint tenant-scoped. | Wajib | BR-012 |
+| FR-026 | Notifikasi error sistem ke Mobile API | Error sistem (HTTP 500 dan Redis 503) dikirim terenkripsi ke *CBS Error Notification API* milik Mobile API: payload `request_id`, `endpoint`, `error_code` (`CBS_TIMEOUT`/`CBS_DB_ERROR`/`CBS_SERVICE_UNAVAILABLE`/`CBS_INTERNAL_ERROR`), `error_message` generik, `occurred_at`, ditambah field korelasi opsional `user_id`/`office_code`/`idempotency_key` (dari token dan `X-IDEMPOTENCY-KEY`, hanya bila lolos format listener). Async (tidak mengubah/menunda respons ke klien). Retry maks 3 hanya untuk timeout/5xx dengan `request_id` **baru** tiap percobaan; 400/401/403/409 tidak di-retry; `occurred_at` selalu offset `+07:00`; IP pengirim wajib terdaftar di whitelist Mobile API; error sama (endpoint + `error_code`) dikirim maks sekali per 60 detik (listener sendiri hanya memproses 3 notifikasi pertama per endpoint per 60 detik). Error bisnis/validasi/auth tidak dikirim. Opsional, aktif via konfigurasi `cbs-notify.*`. | Tinggi | — |
 | FR-025 | Batch onboarding partner *channeling* (Akulaku) | Submit kumpulan record nasabah+kredit sebagai job *asynchronous* (`POST /nasabah/batch-akulaku`), dengan polling status (`GET .../{jobId}`) & detail per-baris (`GET .../{jobId}/items`). | Wajib | BR-028..BR-033 |
 
 ### Detail FR-014 (Transaksi Tabungan — money-path)
@@ -320,6 +321,28 @@ untuk semua tipe transaksi:
   1/3/6/12) alih-alih On Call (`jkw` yang aktif di `api_dep_oncall_rate`). Belum ada produk
   seperti itu saat ini; dicatat sebagai pemicu perbaikan lanjutan bila kelak terjadi.
 
+### Detail FR-015 (Pencairan Pinjaman — potongan provisi/adm, 18 November 2026)
+- **Validasi tambahan** (di service, berlaku juga untuk pemanggilan batch Akulaku):
+  `nominal` = `kredit.jml_pinjaman`; rekening belum pernah dicairkan (tidak ada baris `kretrans`
+  `my_kode_trans = 100`); untuk `C1`, `tabung.nasabah_id` = `kredit.nasabah_id`; potongan
+  provisi + adm < nominal; pinjaman dengan potongan > 0 hanya boleh `C1`. Semua → `95`.
+- **Nilai potongan** = `kredit.provisi` dan `kredit.adm_lainnya` (snapshot saat registrasi dari
+  `api_loan_style.perc_provisi`/`perc_adm` × plafond). Nominal tidak pernah dari client.
+- **Service fee via payload (23 November 2026, BR-039a):** registrasi tanpa `loanStyleId` boleh
+  mengirim `serviceFee` (persen, `0 ≤ x < 100`); sistem menyimpan `jmlPinjaman × serviceFee / 100`
+  di `kredit.adm_lainnya` (provisi kosong). `percDenda` opsional (`0 ≤ x < 100`) disimpan apa adanya
+  ke `kredit.perc_denda` — sumber persen denda FR-016 untuk pinjaman tanpa loan style; kosong =
+  tanpa denda. Keduanya diabaikan bila `loanStyleId` diisi. Nilai di luar
+  rentang → `95` "Service fee harus berupa persen antara 0 dan kurang dari 100".
+- **Posting C1** (pola CBS `kode_trans 110`):
+  - `kretrans` 100: `pokok` = nominal, `provisi`, `adm_lainnya` terisi.
+  - `tabtrans`: `110` +nominal; `210` −provisi ("Provisi"); `210` −adm ("Adm.Lainnya"); komponen 0 dilewati.
+  - Jurnal 1: `D KODE_PERK_KREDIT / K hutang pokok tabungan` sebesar nominal.
+  - Jurnal 2 (bila potongan > 0): `D hutang pokok tabungan` total potongan /
+    `K KODE_PERK_PROVISI` provisi / `K kode_perk_pend_adm_lainnya` adm.
+- **Output** `TransKreditPencairanResponseDTO` ditambah `nominal`, `provisi`, `admLainnya`, `jumlahDiterima`.
+- **Reversal C1** menghapus baris pencairan beserta potongan dan jurnalnya, lalu me-repost saldo tabungan.
+
 ### Detail FR-016 (Angsuran Pinjaman & Tagihan Kredit — sekuensial, M-Pay)
 - **Latar belakang:** Keputusan BPR/M-Pay (2026-09-01) — alur pembayaran angsuran mobile tidak
   lagi mendukung pembayaran sebagian ("mirip fintech"): nasabah membayar satu angsuran penuh
@@ -357,7 +380,22 @@ untuk semua tipe transaksi:
 - **Aturan validasi:** lihat BR-023/BR-024; seluruh guard lama (kode kantor, tipe transaksi,
   kuitansi duplikat, pinjaman ditutup, saldo cukup) tetap berlaku, tanpa perubahan urutan
   relatif terhadap pemeriksaan sekuensial baru di atas.
-- **Catatan cakupan:** `denda` (0,3%/hari) tetap **placeholder** pada kedua endpoint — belum ada
+- **Jurnal (diperbaiki 17 November 2026, BR-037):** `D` akun debet integrasi sebesar total
+  angsuran; `K kre_integrasi.KODE_PERK_KREDIT` sebesar **pokok**; `K kre_integrasi.KODE_PERK_BUNGA`
+  sebesar **bunga**. Komponen bernilai 0 tidak dibuatkan baris. Sebelumnya total pokok+bunga
+  dikreditkan seluruhnya ke `KODE_PERK_KREDIT`. Reversal menyalin seluruh baris jurnal asli
+  dengan sisi terbalik, sehingga ikut terpecah tanpa perubahan.
+- **Denda keterlambatan (sejak 17 November 2026, BR-038):** dihitung per rekening pada
+  `tglTrans` (inquiry) atau tanggal transaksi (angsuran) dengan metode segmen CBS: tunggakan
+  pokok+bunga kumulatif pada tiap tanggal jatuh tempo/pembayaran × jumlah hari hingga kejadian
+  berikutnya × `kredit.perc_denda` / `sys_mysysid.KRE_SETTING_PEMBAGI_DENDA_HARIAN`, dibulatkan
+  setengah ke bawah pada total, ditambah denda migrasi, dikurangi denda yang sudah dibayar,
+  minimal 0. Dihitung sejak `KRE_TANGGAL_MIGRASI_DENDA`. `perc_denda` kosong/0 → denda 0.
+  Pembagi kosong, toleransi hari ≠ 0, atau pengecualian hari libur = YA → transaksi ditolak (`95`).
+  `/tagihan`: denda ditaruh di baris angsuran paling awal + `totalDenda`. `/angsuranPinjaman`:
+  denda dibayar penuh, disimpan di `kretrans.denda`, jurnal `K KODE_PERK_DENDA`; reversal
+  menegasikannya.
+- **Catatan cakupan (historis, sebelum 17 November 2026):** `denda` (0,3%/hari) tetap **placeholder** pada kedua endpoint — belum ada
   perhitungan/posting denda pada perubahan ini (sama seperti dicatat pada FR-012a).
 
 ### Detail FR-019 (Reversal)
@@ -379,6 +417,10 @@ untuk semua tipe transaksi:
   | `D1`/`D2`/`D3` (reversal setoran) | rekening tujuan setoran | ✅ |
   | `T1` (reversal transfer) | rekening **penerima** transfer | ✅ |
   | `T1` leg pengirim, `T2`/`T3`/`T4` | (dikredit balik) | — |
+
+  Untuk `D2`/`T2`, reversal juga membuat `abatrans` pembalik untuk rekening bank (arah saldo dibalik,
+  bertanggal hari reversal) dan me-repost `aba.saldo_akhir_pokok`. Posting maju `D2` me-repost saldo ABA
+  rekening bank sumber (akun debet), `T2` rekening bank tujuan (akun kredit).
 
   Aturannya **identik** dengan posting normal: `saldo_akhir - saldo_blokir - minimum >= pokok`
   (hanya `pokok`; `adm` tidak dihitung karena masuk jurnal GL, bukan saldo rekening).
@@ -470,7 +512,7 @@ untuk semua tipe transaksi:
 | NFR-007 | Ketersediaan | Target uptime ≥ 99,9%; probe `/actuator/health`. |
 | NFR-008 | Skalabilitas | Stateless service; rate limit per pengguna/operasi; horizontally scalable di belakang LB/proxy. |
 | NFR-009 | Kompatibilitas | Kontrak `ApiResponse<T>` stabil; kompatibel dengan skema legacy IBS (dual datasource, SHA1). |
-| NFR-010 | Observability | Logging SLF4J ke `logs/microservicecore.log`; audit request/response di `api_log`. |
+| NFR-010 | Observability | Logging SLF4J ke `logs/microservicecore.log`; audit request/response di `api_log`; notifikasi error sistem ke Mobile API (FR-026) dengan `request_id` yang juga tercatat di log untuk korelasi. |
 | NFR-011 | Dokumentasi | Seluruh endpoint terdokumentasi OpenAPI/Swagger; SQL `show-sql` aktif untuk trace. |
 | NFR-012 | Lokalisasi | Domain & pesan berbahasa Indonesia; format tanggal ISO. |
 
@@ -502,6 +544,10 @@ Alternative/Exception Flow:
 - **Antarmuka Pengguna:** lihat [Desain UI/UX](05-uiux-design.md) — H2H tidak memiliki UI
   langsung; dashboard monitoring adalah aplikasi terpisah (`health-ui-mcs`).
 - **Antarmuka Sistem/API:** lihat [API Contract](03-api-contract.md) — seluruh endpoint REST.
+- **Antarmuka Sistem Keluar (outbound):** *CBS Error Notification API* milik Mobile API (FR-026) —
+  HTTPS POST JSON envelope terenkripsi (AES-256-GCM, kunci AES dibungkus RSA-OAEP SHA-1 dengan public
+  key Mobile API, tanda tangan HMAC-SHA256). Spesifikasi: *CBS Error Notification API v1.0*
+  (12 November 2026) dari tim Mobile API. TLS wajib terverifikasi.
 - **Antarmuka Data:** lihat [Desain Database](04-database-design.md) — dual datasource MySQL
   (`dbcore`, `dbcore_sys`) + Redis.
 
@@ -524,6 +570,14 @@ Alternative/Exception Flow:
 | 1.4.0 | 1 September 2026 | | FR-012 diperluas (`/tagihan` mengembalikan seluruh angsuran belum lunas, bukan satu baris) & FR-016 diperluas + **Detail FR-016 baru**: pembayaran angsuran pinjaman sekuensial tanpa partial payment (keputusan BPR/M-Pay) — hanya angsuran belum lunas paling awal yang dapat dibayar, `pokok`/`bunga` tidak lagi diterima dari client (diturunkan dari jadwal). BR-023/BR-024 baru pada BRD terkait. |
 | 1.5.0 | 11 September 2026 | | FR-013 diperluas & **Detail FR-013 baru**: registrasi deposito kini mengklasifikasi produk lewat `dep_produk.kode_jenis` (Bulanan/OnCall/BDD) dan menambah kategori validasi `jkw` ketiga — produk **On Call** (`kodeProduk=311`, `jkw` 7 atau 14 hari, satuan hari). Sekaligus mencatat perbaikan bug tanggal jatuh tempo (`tglJt`) yang sebelumnya selalu dihitung dalam bulan untuk semua produk. BR-025 baru pada BRD terkait. Kontrak `/registrasi` tidak berubah. |
 | 1.6.0 | 11 September 2026 | | **Koreksi Detail FR-013** — memo BPR yang sebenarnya menetapkan suku bunga **berbeda per tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 September 2026), bukan `dep_produk.suku_bunga_default` seperti dicatat pada versi 1.5.0. Dikoreksi: kategori "Produk On Call" tidak lagi memakai `jkw ∈ {7,14}` hardcoded — validasi tenor kini sepenuhnya ditentukan oleh baris aktif di master baru `api_dep_oncall_rate` (per `kodeProduk`+`jkw`+periode, bentuk meniru `api_tab_campaign`), **tanpa fallback** ke default produk; pesan penolakan dikoreksi menjadi "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini". Tambah catatan cakupan API: akrual bunga & ARO/rollover adalah tanggung jawab backoffice CBS; ketentuan memo #3/#5/#6 tidak di-enforce di level API. BR-025/BR-026/BR-027 pada BRD terkait. Kontrak `/registrasi` tetap tidak berubah. |
+| 1.8.0 | 17 November 2026 | | Detail FR-016: jurnal angsuran kini memisahkan pokok (`KODE_PERK_KREDIT`) dan bunga (`KODE_PERK_BUNGA`); sebelumnya seluruhnya ke `KODE_PERK_KREDIT`. Kontrak API tidak berubah. BR-037 pada BRD terkait. |
+| 1.9.0 | 17 November 2026 | | Detail FR-016: denda keterlambatan kini dihitung (metode segmen CBS, pembagi dari setting CBS), dibayar penuh bersama angsuran paling awal, dijurnal ke `KODE_PERK_DENDA`, dinegasikan saat reversal. BR-038 pada BRD terkait. |
+| 1.10.0 | 18 November 2026 | | Detail FR-015 baru: potongan provisi/adm dari tabungan saat pencairan C1 (pola CBS), validasi nominal = plafond, satu kali pencairan, tabungan milik peminjam; reversal C1 me-repost saldo tabungan. BR-039 pada BRD terkait. |
+| 1.10.1 | 20 November 2026 | | FR-019: perbaikan reversal `D2`/`T2` — `my_kode_trans` reversal `D2` (sumber `115`) kini `200` (sebelumnya `100`, sehingga tabungan & ABA dikredit dua kali dan cek saldo BR-011a terlewati), `T2` (sumber `215`) kini dipetakan ke `100` (sebelumnya selalu ditolak). `abatrans` pembalik bertanggal hari reversal (sebelumnya tanggal transaksi asli). Posting maju `D2` kini me-repost saldo rekening ABA (sebelumnya tidak ter-update). Tanpa perubahan kontrak API. |
+| 1.10.2 | 23 November 2026 | | Detail FR-015: `serviceFee` (persen) dan `percDenda` opsional pada registrasi tanpa `loanStyleId`; nominal service fee disimpan di `kredit.adm_lainnya` dan dipotong saat pencairan C1, `percDenda` ke `kredit.perc_denda` (dipakai FR-016). BR-039a pada BRD terkait. |
+| 1.11.1 | 25 November 2026 | | **FR-026 disesuaikan dengan jawaban resmi Mobile API (QnA Q1–Q14):** retry memakai `request_id` baru tiap percobaan (sebelumnya sama), 409 tidak lagi dianggap sukses (tidak di-retry, dicatat di log), payload menambah field korelasi opsional `user_id`/`office_code`/`idempotency_key`, respons 200 `ignored=true` (rate limit listener 3/60 detik per endpoint) dicatat di log. URL saat ini = environment development. |
+| 1.11.0 | 25 November 2026 | | **FR-026 baru:** notifikasi error sistem (HTTP 500 & Redis 503) ke *CBS Error Notification API* Mobile API — envelope terenkripsi, async, retry 5xx/timeout dengan `request_id` sama, 409 = sudah diterima, throttle 60 detik, error bisnis/auth tidak dikirim, opsional via `cbs-notify.*`. NFR-010 & §6 (antarmuka outbound) diperbarui. Perilaku cakupan/retry/format masih mengikuti usulan CBS di QnA ke tim Mobile API, menunggu konfirmasi. |
+| 1.10.3 | 23 November 2026 | | FR-012: endpoint `/pinjaman/detail` untuk mengecek hasil registrasi (juga sebelum pencairan); `/saldo` menampilkan provisi, adm lainnya, persen denda. |
 
 ---
 

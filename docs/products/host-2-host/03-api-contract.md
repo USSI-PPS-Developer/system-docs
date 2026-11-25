@@ -112,6 +112,7 @@ Seluruh endpoint bisnis mengembalikan envelope `ApiResponse<T>`:
 | 20 | `POST` | `/tagihan` | Tagihan kredit. |
 | 21 | `POST` | `/saldo` | Saldo kredit. |
 | 22 | `POST` | `/list` | Daftar kredit. |
+| 22a | `POST` | `/detail` | Detail rekening pinjaman (cek hasil registrasi, juga sebelum pencairan). |
 
 ### 3.5 Deposito — `/api/v1/deposito`
 | No | Method | Endpoint | Deskripsi |
@@ -501,10 +502,11 @@ penggantinya adalah allowlist di atas + jejak audit di bawah.
 | Endpoint | Request DTO | Field kunci | Guard |
 |----------|-------------|-------------|-------|
 | `GET /loan-style` | — (`Authorization` + query opsional `kodeProduk`) | — | — (tabel referensi global, tanpa tenant guard) |
-| `/registrasi` | `CreateKreditRequestDTO` | `kodeKantor`,`userId`,`nasabahId`,`tglRealisasi`,`noSpk`,`loanStyleId`(opsional — catalog `api_loan_style`, lihat §4.11.1) — `kodeProduk`,`jmlPinjaman`,`jmlAngsuran`,`satuanWaktuAngsuran`(`[HMB]`),`typeKredit`(`100/200/300/310/350/700/710`),`sukuBungaPerTahun` wajib **hanya** bila `loanStyleId` kosong | `assertOffice(kodeKantor)` |
+| `/registrasi` | `CreateKreditRequestDTO` | `kodeKantor`,`userId`,`nasabahId`,`tglRealisasi`,`noSpk`,`loanStyleId`(opsional — catalog `api_loan_style`, lihat §4.11.1) — `kodeProduk`,`jmlPinjaman`,`jmlAngsuran`,`satuanWaktuAngsuran`(`[HMB]`),`typeKredit`(`100/200/300/310/350/700/710`),`sukuBungaPerTahun` wajib **hanya** bila `loanStyleId` kosong; `serviceFee` (opsional, **persen**, hanya jalur tanpa `loanStyleId`, lihat §4.11.1a) | `assertOffice(kodeKantor)` |
 | `/jadwal` | `InquiryJadwalKreditRequestDTO` | `noRekening`,`userId` | `assertKreditOffice(noRekening)` — response berubah bentuk, lihat §4.11.2 |
 | `/tagihan` | `InquiryTagihanKreditRequestDTO` | `noRekening`,`tglTrans`(date),`userId` | `assertKreditOffice(noRekening)` — response berubah bentuk, lihat §4.11.3 |
-| `/saldo` | `InquirySaldoRequestDTO` | `tglTrans`,`noRekening`,`userId` | `assertKreditOffice(noRekening)` |
+| `/saldo` | `InquirySaldoRequestDTO` | `tglTrans`,`noRekening`,`userId` | `assertKreditOffice(noRekening)` — response ditambah `provisi`,`admLainnya`,`percDenda` (§4.11.4) |
+| `/detail` | `DetailKreditRequestDTO` | `noRekening`,`userId` | `assertKreditOffice(noRekening)` — lihat §4.11.4 |
 | `/list` | `ListKreditRequestDTO` | `kodeKantor`,`noRekening`,`tglHitung`(date),`userId` | `assertOffice(kodeKantor)` |
 
 **`GET /loan-style` — Response 200 OK**
@@ -558,9 +560,9 @@ diekspos pada response body — `noRekening` tetap satu-satunya field response):
 `provisi = plafond × perc_provisi / 100`, `adm_lainnya = plafond × perc_adm / 100`,
 `perc_denda` = salinan `api_loan_style.perc_denda` (0,3%/hari) pada baris catalog.
 
-> ⚠️ **Denda keterlambatan belum diterapkan.** `perc_denda` pada perubahan ini **hanya
-> disimpan** sebagai data (`api_loan_style.perc_denda` & snapshot `kredit.perc_denda`); alur
-> angsuran/pembayaran **belum** menghitung atau memposting denda. Metode angsuran tetap
+> ✅ **Denda keterlambatan diterapkan sejak 17 November 2026** memakai `kredit.perc_denda`
+> dibagi pembagi setting CBS (`KRE_SETTING_PEMBAGI_DENDA_HARIAN`, Sentosa = 1000, jadi `0,300`
+> = 0,03%/hari) — lihat §4.11.3 dan §4.15. Metode angsuran tetap
 > **flat** (pokok+bunga tetap per periode), tanpa penalti pelunasan dipercepat.
 >
 > ⚠️ **Catalog dengan suku bunga belum di-backfill ditolak.** `api_loan_style.suku_bunga_per_tahun`
@@ -568,6 +570,35 @@ diekspos pada response body — `noRekening` tetap satu-satunya field response):
 > di-`UPDATE` manual punya `suku_bunga_per_tahun = 0`. `loanStyleId` yang merujuk baris seperti
 > itu ditolak (kode `95`, "Suku bunga loan style belum diisi") supaya tidak ada kredit
 > ter-registrasi dengan bunga 0% secara tidak sengaja.
+
+#### 4.11.1a Service fee via payload (jalur tanpa `loanStyleId`, 23 November 2026)
+
+Kesepakatan dengan partner (sementara, sampai catalog loan style dipakai): registrasi **tanpa**
+`loanStyleId` boleh mengirim `serviceFee` dalam **persen** dari `jmlPinjaman`.
+
+| Field | Tipe | Wajib | Keterangan |
+|-------|------|-------|------------|
+| `serviceFee` | number | Tidak | Persen dari `jmlPinjaman`, mis. `6` = 6%. Harus `0 ≤ nilai < 100`. Kosong = tanpa service fee. **Diabaikan** bila `loanStyleId` diisi (fee dari catalog). |
+| `percDenda` | number | Tidak | Persen denda keterlambatan, mis. `0` atau `0.5`, disimpan **apa adanya** ke `kredit.perc_denda` (satuan sama dengan `api_loan_style.perc_denda`, dibagi pembagi setting CBS saat hitung denda, lihat §4.11.3). Harus `0 ≤ nilai < 100`. Kosong = tanpa denda (perilaku lama). **Diabaikan** bila `loanStyleId` diisi. |
+
+Server menghitung nominalnya — `jmlPinjaman × serviceFee / 100`, dibulatkan sama dengan catalog —
+dan menyimpan **nominal** itu di `kredit.adm_lainnya` (bukan persennya). `kredit.provisi` tidak
+diisi. Nominal tersebut dipotong dari tabungan saat pencairan `C1` (§4.14), sehingga pinjaman
+dengan service fee hanya dapat dicairkan lewat `C1`. Response `/registrasi` tidak berubah.
+
+```json
+{
+  "kodeKantor": "001", "userId": "5", "nasabahId": "001000123",
+  "kodeProduk": "710", "typeKredit": "100", "jmlPinjaman": 1000000,
+  "jmlAngsuran": 3, "satuanWaktuAngsuran": "B", "sukuBungaPerTahun": 24,
+  "tglRealisasi": "2026-11-24", "noSpk": "SPK/001", "serviceFee": 6, "percDenda": 0.5
+}
+```
+→ `kredit.adm_lainnya = 60000`, `kredit.perc_denda = 0.500`; saat pencairan `C1`: `admLainnya = 60000`, `jumlahDiterima = 940000`.
+
+Penolakan: `95` "Service fee harus berupa persen antara 0 dan kurang dari 100" (nilai negatif
+atau ≥ 100 — juga menangkap nominal yang keliru dikirim sebagai persen) · `95` "Persen denda harus
+antara 0 dan kurang dari 100". Kredit **tidak** dibuat.
 
 **Kode error khusus (`loanStyleId`)**
 
@@ -652,13 +683,62 @@ plus ringkasan total (pola yang sama dengan perubahan `/jadwal` di §4.11.2):
 > (`{ noRekening, tglTrans, userId }`). Client yang sebelumnya mem-parse `responseData`
 > langsung sebagai satu baris/array **wajib** diperbarui untuk membaca `responseData.tagihan[]`
 > (bisa berisi lebih dari satu baris) beserta `responseData.totalPokok`/`totalBunga`/`totalDenda`/
-> `totalTagihan`. Setiap baris `tagihan[]` bertambah field baru `denda` (placeholder `0`,
-> lihat §4.11.1) dan `totalTagihan` (= `pokok+bunga+denda`); field lama `tunggakanPokok`/
+> `totalTagihan`. Setiap baris `tagihan[]` bertambah field baru `denda` (denda keterlambatan
+> rekening — sejak 17 November 2026 terisi, hanya pada baris angsuran paling awal; baris lain `0`) dan `totalTagihan` (= `pokok+bunga+denda`); field lama `tunggakanPokok`/
 > `tunggakanBunga` (akumulasi tunggakan level akun) **dihapus** — sudah tidak relevan karena
 > setiap baris kini mewakili satu angsuran spesifik yang belum lunas, dan `totalPokok`/
 > `totalBunga` level-list di atas menggantikan fungsi ringkasannya.
 
 ---
+
+#### 4.11.4 `POST /pinjaman/detail` dan field fee pada `/saldo` (23 November 2026)
+
+`/saldo` hanya mengembalikan data setelah ada transaksi pada/sebelum `tglTrans` (query-nya
+menggabungkan `kretrans`), sehingga **kosong sebelum pencairan**. Untuk mengecek hasil
+`/registrasi`, gunakan `/detail`, yang membaca `kredit` langsung dan selalu mengembalikan data
+selama rekening ada.
+
+**Request** (header sama dengan `/saldo`: `Authorization`, `X-IDEMPOTENCY-KEY`)
+```json
+{ "noRekening": "001105052571", "userId": "199" }
+```
+
+**Response 200 OK**
+```json
+{
+  "responseCode": "00",
+  "responseData": {
+    "noRekening": "001105052571", "nasabahId": "00075371", "namaNasabah": "BUDI",
+    "kodeKantor": "001", "kodeProduk": "105", "deskripsiProduk": "...",
+    "typeKredit": "100", "loanStyleId": null, "noSpk": "SPK-11213",
+    "jmlPinjaman": 100000.00, "jmlAngsuran": 3, "satuanWaktuAngsuran": "B",
+    "sukuBungaPerTahun": 36.0000, "tglRealisasi": "2026-11-23", "tglJatuhTempo": "2027-02-23",
+    "provisi": 0, "admLainnya": 6000.00, "totalPotongan": 6000.00, "jumlahDiterima": 94000.00,
+    "percDenda": 0.500, "sudahDicairkan": false, "status": 0,
+    "jadwal": [
+      { "tglTrans": "2026-12-23", "kodeKantor": "001", "noRekening": "001105052571",
+        "angsuranKe": 1, "pokok": 33333.00, "bunga": 3000.00, "keterangan": "..." }
+    ],
+    "totalPokok": 100000.00, "totalBunga": 9000.00
+  },
+  "responseMessage": "Detail rekening pinjaman berhasil ditemukan"
+}
+```
+
+| Field | Keterangan |
+|-------|------------|
+| `provisi` / `admLainnya` | Nominal dari `kredit.provisi` / `kredit.adm_lainnya` (service fee); NULL ditampilkan `0`. |
+| `totalPotongan` | `provisi + admLainnya` — yang dipotong dari tabungan saat pencairan `C1`. |
+| `jumlahDiterima` | Estimasi dana diterima saat pencairan `C1` = `jmlPinjaman − totalPotongan`. |
+| `percDenda` | `kredit.perc_denda` apa adanya; `null` = tanpa denda. |
+| `sudahDicairkan` | `true` bila sudah ada baris pencairan (`kretrans my_kode_trans = 100`). |
+| `status` | `kredit.status`: `0` terdaftar/belum cair, `1` aktif, `2` lunas. Rekening lama yang didaftarkan sebelum 23 November 2026 dan belum dicairkan bisa `null`. |
+| `jadwal` / `totalPokok` / `totalBunga` | Sama dengan `/jadwal` (§4.11.2). |
+
+Penolakan: `95` "Rekening pinjaman tidak ditemukan"; 403 bila rekening milik kantor lain.
+
+**`/saldo`** — setiap elemen `responseData` kini juga berisi `provisi`, `admLainnya`, `percDenda`
+(nilai mentah dari `kredit`, bisa `null`). Aditif, field lama tidak berubah.
 
 ### 4.12 `POST /api/v1/deposito/*` · `GET /api/v1/deposito/produk-spesial-rate`
 
@@ -821,6 +901,27 @@ yang aktif saat ini (bisa berubah tanpa perubahan kode bila BPR menambah/menguba
 `tipeTrans` ∈ `C1|C2|C3`; `nominal` > 0 (dan harus sama dengan jumlah pinjaman — validator).
 Guard: `assertOffice(kodeKantor)`. Response: `TransKreditPencairanResponseDTO`.
 
+
+**Sejak 18 November 2026 — potongan service fee (provisi/adm) saat pencairan.** Provisi dan adm
+lainnya pinjaman (snapshot dari catalog loan style saat registrasi) dipotong dari tabungan
+penerima: tabungan dikredit nominal bruto lalu didebet per komponen. Request **tidak berubah**.
+
+**Response `responseData`** (field baru bersifat aditif):
+```json
+{
+  "transId": 1234567, "kuitansi": "KW0002", "kuitansi_id": "KWID0002",
+  "noRekening": "0020001", "tglTrans": "2026-11-18", "jamTrans": "10:15:00",
+  "nominal": 100000, "provisi": 0, "admLainnya": 6000, "jumlahDiterima": 94000
+}
+```
+
+**Penolakan baru (`95`):**
+- "Nominal pencairan harus sama dengan jumlah pinjaman" (juga dicek ulang di service)
+- "Pinjaman sudah dicairkan"
+- "Rekening tabungan bukan milik nasabah peminjam" (`C1`)
+- "Pinjaman dengan potongan provisi/adm hanya dapat dicairkan ke rekening tabungan (C1)"
+- "Potongan provisi dan adm tidak boleh melebihi nominal pencairan"
+
 ---
 
 ### 4.15 `POST /api/v1/transaksi/angsuranPinjaman`
@@ -839,7 +940,7 @@ Guard: `assertOffice(kodeKantor)`. Response: `TransKreditPencairanResponseDTO`.
   "angsuranKe": 1,
   "kuitansi": "KWT-0001",
   "kuitansiId": "K-0001",
-  "tipeTrans": "320",
+  "tipeTrans": "L2",
   "kodeKantor": "001",
   "noRekening": "001101000328",
   "keterangan": "Angsuran ke-1",
@@ -852,7 +953,8 @@ Guard: `assertOffice(kodeKantor)`. Response: `TransKreditPencairanResponseDTO`.
 | `angsuranKe` | number | Ya | Angsuran yang ingin dibayar (dari hasil `/pinjaman/tagihan`, §4.11.3); server **memvalidasi** ini harus == angsuran belum lunas paling awal, tidak lagi sekadar dicatat. |
 | `pokok` / `bunga` | — | **Dihapus** | ⚠️ Sebelumnya dikirim client dan dipercaya langsung; sekarang **tidak ada lagi** pada request — nilai selalu dihitung server dari jadwal (`kretrans` `my_kode_trans=200`). |
 | `kuitansiId` | string | Ya | ≤ 18 karakter. |
-| lainnya (`tglTrans`,`kuitansi`,`tipeTrans`,`kodeKantor`,`noRekening`,`keterangan`,`userId`) | | Ya | Tidak berubah dari sebelumnya. |
+| `tipeTrans` | string | Ya | Kode integrasi di tabel `api_integration`, untuk angsuran: **`L2`** (Pembayaran Angsuran). Bukan kode transaksi CBS `320` — nilai lain ditolak "Tipe transaksi tidak tersedia". _(Koreksi 2026-11-23: contoh sebelumnya keliru menulis `"320"`.)_ |
+| lainnya (`tglTrans`,`kuitansi`,`kodeKantor`,`noRekening`,`keterangan`,`userId`) | | Ya | Tidak berubah dari sebelumnya. |
 
 Guard: rantai standar (§5) lalu `assertOffice(kodeKantor)`, kemudian tiga pemeriksaan urutan
 pembayaran (lihat tabel kode error di bawah) dijalankan **di dalam** lock pessimistic-write
@@ -879,8 +981,11 @@ kredit, sebelum pengecekan saldo cukup.
 ```
 
 > `pokok`/`bunga`/`totalAngsuran` pada response adalah nilai **yang benar-benar diposting**
-> (diturunkan server dari jadwal), bukan echo dari request. `denda` adalah placeholder `0` —
-> perhitungan denda keterlambatan 0,3%/hari masih belum diimplementasikan (lihat §4.11.1).
+> (diturunkan server dari jadwal), bukan echo dari request. `denda` adalah denda keterlambatan
+> seluruh rekening per `tglTrans` yang **dibayar penuh** bersama angsuran ini (sama dengan
+> `totalDenda` dari `/pinjaman/tagihan` pada tanggal yang sama); `totalAngsuran` = pokok + bunga
+> + denda. Kode error baru (`95`): "Setting KRE_SETTING_PEMBAGI_DENDA_HARIAN belum diatur atau
+> tidak valid" dan penolakan setting denda CBS yang belum didukung (toleransi hari, hari libur).
 
 **Kode error khusus (pembayaran sekuensial)**
 
@@ -937,6 +1042,7 @@ tabungan kini divalidasi dengan aturan **sama persis** dengan posting normal:
 | `T1` (reversal transfer) | rekening **penerima** transfer (leg lawan) | ✅ |
 | `T1` (reversal transfer) | rekening pengirim (dikredit balik) | — (tidak perlu) |
 | `T2` / `T3` / `T4` (reversal penarikan) | — (dikredit balik) | — (tidak perlu) |
+> **Leg bank (ABA) pada `D2`/`T2`:** reversal juga membuat baris `abatrans` pembalik untuk rekening bank (`kode_trans` `115`↔`215`, arah saldo dibalik: setoran via bank `D2` → ABA berkurang, penarikan via bank `T2` → ABA bertambah), **bertanggal hari reversal** (sama dengan baris `tabtrans` dan jurnal pembaliknya), lalu me-repost `aba.saldo_akhir_pokok`. Saldo rekening ABA tidak divalidasi saat reversal. *(Sebelum 20 November 2026: reversal `D2` salah arah — tabungan dan ABA justru dikredit lagi dan cek saldo terlewati — dan reversal `T2` selalu ditolak "KodeTrans tidak dikenal untuk reverse".)*
 
 Bila saldo tidak mencukupi, reversal **ditolak** dan tidak ada baris apa pun yang ditulis.
 Tidak tersedia mekanisme force/override: pemulihan dana yang sudah terlanjur dipakai nasabah
@@ -1068,6 +1174,11 @@ Sumber: `constants/AppConstants.ResponseCodes`.
 | 1.5.0 | 1 September 2026 | | **Perubahan kontrak breaking** pada dua endpoint kredit (keputusan BPR/M-Pay — angsuran pinjaman sekuensial, tanpa partial payment): `/pinjaman/tagihan` sekarang mengembalikan seluruh angsuran belum lunas terurut `angsuranKe` (§4.11.3 baru), bukan satu baris; `/transaksi/angsuranPinjaman` tidak lagi menerima `pokok`/`bunga` dari client (nilai diturunkan server dari jadwal) dan hanya menerima `angsuranKe` yang merupakan angsuran belum lunas paling awal (§4.15) — response-nya bertambah `pokok`/`bunga`/`denda`/`totalAngsuran`. Kode error baru (tetap `95`): "Pinjaman sudah lunas, tidak ada tagihan yang harus dibayar" · "Angsuran ke-N sudah dibayar" · "Angsuran ke-N harus dibayar terlebih dahulu" · "Data jadwal angsuran tidak valid". Tidak ada kode response baru maupun perubahan skema DB. |
 | 1.6.0 | 11 September 2026 | | Tambah §4.12 "Aturan produk On Call (registrasi)": `POST /deposito/registrasi` mengklasifikasi produk lewat `dep_produk.kode_jenis` (baru) dan membatasi `jkw` produk On Call (`kodeProduk=311`) ke **7 atau 14 hari**; tanggal jatuh tempo dihitung dalam hari (bukan bulan) untuk produk ini — sekaligus memperbaiki bug lama yang selalu menghitung jatuh tempo dalam bulan untuk semua produk. Kode error tetap `95` (tidak ada kode response baru). **Bukan breaking change** — `CreateDepositoRequestDTO` dan response `/registrasi` tidak berubah. |
 | 1.7.0 | 11 September 2026 | | **Koreksi §4.12** — memo BPR yang sebenarnya menetapkan suku bunga **per-tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 Sep 2026), bukan `suku_bunga_default` seperti tercatat pada versi 1.6.0. Dikoreksi: tidak ada lagi `jkw ∈ {7,14}` hardcoded — tenor yang diterima ditentukan oleh baris aktif di master baru `api_dep_oncall_rate` (per `kodeProduk`+`jkw`+periode, bentuk meniru `api_tab_campaign`, **tanpa fallback** ke default produk); pesan penolakan dikoreksi menjadi "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini". Tambah catatan cakupan API: akrual bunga & ARO/rollover adalah proses backoffice CBS; ketentuan memo #3/#5/#6 tidak di-enforce di level API. Kode error tetap `95`. **Tetap bukan breaking change.** |
+| 1.8.0 | 17 November 2026 | | `denda` pada `/pinjaman/tagihan` dan `/transaksi/angsuranPinjaman` tidak lagi placeholder `0`: berisi denda keterlambatan rekening (metode CBS). Tidak ada field baru; ditambah penolakan `95` bila setting denda CBS belum diatur/tidak didukung. |
+| 1.9.0 | 18 November 2026 | | §4.14 pencairan: provisi/adm dipotong dari tabungan saat `C1`; response ditambah `nominal`, `provisi`, `admLainnya`, `jumlahDiterima` (aditif); 4 penolakan `95` baru (sudah dicairkan, tabungan bukan milik peminjam, potongan selain `C1`, potongan ≥ nominal). |
+| 1.9.1 | 20 November 2026 | | §4.17 `/reversal`: catatan leg bank (ABA) untuk `D2`/`T2` — `abatrans` pembalik bertanggal hari reversal dengan arah saldo dibalik, `aba.saldo_akhir_pokok` di-repost. Perbaikan bug: reversal `D2` sebelumnya salah arah (tabungan & ABA dikredit lagi), reversal `T2` selalu ditolak. Bentuk request/response tidak berubah. |
+| 1.9.2 | 23 November 2026 | | §4.11.1a baru: `POST /pinjaman/registrasi` tanpa `loanStyleId` menerima `serviceFee` opsional (persen dari `jmlPinjaman`; nominalnya disimpan di `kredit.adm_lainnya` dan dipotong saat pencairan `C1`) dan `percDenda` opsional (disimpan ke `kredit.perc_denda`). Penolakan `95` baru untuk nilai di luar `0 ≤ x < 100`. Aditif, bukan breaking. Koreksi §4.15: contoh `tipeTrans` angsuran `"320"` → `"L2"` (kode `api_integration`); baris field `tipeTrans` ditambahkan. |
+| 1.9.3 | 23 November 2026 | | §4.11.4 baru: `POST /pinjaman/detail` — detail rekening pinjaman dari master kredit (termasuk fee, estimasi `jumlahDiterima`, `percDenda`, `sudahDicairkan`, jadwal), bisa dipakai sebelum pencairan. `/saldo` ditambah `provisi`, `admLainnya`, `percDenda` (aditif). |
 
 ---
 

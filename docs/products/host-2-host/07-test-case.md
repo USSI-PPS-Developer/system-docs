@@ -185,6 +185,141 @@ TC-215/TC-216 ditambah pada tanggal yang sama untuk cakupan `sukuBungaPerTahun`.
 **Catatan:** Endpoint read-only, tanpa `X-IDEMPOTENCY-KEY`/rate limit/tenant guard (referensi
 global, sama pola dengan `GET /deposito/produk-spesial-rate`).
 
+### TC-217 — Registrasi kredit tidak gagal karena kolom NOT NULL `kredit` (regresi 26 Oktober 2026)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | Registrasi kredit `POST /api/v1/pinjaman/registrasi` |
+| Prioritas | **Kritis** (endpoint tidak bisa dipakai sama sekali saat bug ini aktif) |
+| Pre-condition | Nasabah terverifikasi; produk kredit tersedia (mis. `101`). Tidak ada patch DB. |
+| Test Data | `kodeKantor=001`, `kodeProduk=101`, `typeKredit=100`, `jmlPinjaman=1000000.00`, `jmlAngsuran=3`, `satuanWaktuAngsuran=B`, `sukuBungaPerTahun=3`, tanpa `loanStyleId` |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 | Kirim registrasi kredit jalur legacy (tanpa `loanStyleId`) | HTTP 200 `00` dengan `noRekening`. **Bukan** HTTP 500 `96` | | ⬜ Belum |
+| 2 | Cek baris `kredit` yang terbentuk | `periode_bayar_bunga = '3'`, `slik_persentasi_penjamin = 0.00` | | ⬜ Belum |
+| 3 | Ulangi langkah 1–2 dengan `loanStyleId` | Sama: HTTP 200 `00`, kedua kolom berisi nilai default | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Regresi atas bug di lingkungan dev: sejak 21 September 2026 setiap registrasi kredit
+gagal dengan `Column 'periode_bayar_bunga' cannot be null`. Mengikuti
+`KreditServiceTest$LegacyPath.notNullColumnsCarryDbDefaults` dan
+`KreditServiceTest$CreateKreditRawImport.blankNotNullColumnsKeepDefaults`.
+
+### TC-218 — Jurnal angsuran memisahkan pokok dan bunga (regresi 17 November 2026)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | Angsuran pinjaman `POST /api/v1/transaksi/angsuranPinjaman` (FR-016, BR-037) |
+| Prioritas | **Kritis** (pembukuan) |
+| Pre-condition | Rekening pinjaman produk `101` dengan jadwal angsuran ke-1 pokok 1.166.667, bunga 35.000; belum ada pembayaran |
+| Test Data | `angsuranKe=1`, `tipeTrans` angsuran yang terdaftar di `api_integration` |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 | Bayar angsuran ke-1 | `00`, `pokok=1166667`, `bunga=35000`, `totalAngsuran=1201667` | | ⬜ Belum |
+| 2 | Cek `transaksi_detail` jurnal transaksi tsb | 3 baris: `D` akun debet 1.201.667; `K 1060101` (KYD) 1.166.667; `K 40101010302` (pendapatan bunga) 35.000. Total debet = total kredit | | ⬜ Belum |
+| 3 | Reversal transaksi tsb | Jurnal reversal 3 baris dengan sisi terbalik, akun dan nominal sama | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Sebelum perbaikan, jurnal hanya 2 baris dan seluruh 1.201.667 dikredit ke KYD.
+Mengikuti `KretransServiceTest$TransKreditAngsuran.journalSplitsPokokAndBunga` dan
+`journalSkipsZeroBungaLeg`.
+
+### TC-219 — Denda keterlambatan pinjaman (17 November 2026)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | `/pinjaman/tagihan`, `/transaksi/angsuranPinjaman`, reversal (FR-016, BR-038) |
+| Prioritas | **Kritis** (nominal tagihan nasabah) |
+| Pre-condition | `kredit.perc_denda = 0,300`; `sys_mysysid.KRE_SETTING_PEMBAGI_DENDA_HARIAN = 1000`, toleransi `0`, hari libur `TIDAK`; angsuran ke-1 jatuh tempo, belum dibayar |
+| Test Data | Rekening dengan tunggakan 2.083.333 jatuh tempo 2 hari sebelum `tglTrans` (padanan data riil `001101000122`) |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 | Inquiry `/pinjaman/tagihan` pada tanggal jatuh tempo | `denda = 0` | | ⬜ Belum |
+| 2 | Inquiry 2 hari setelah jatuh tempo | Baris angsuran paling awal `denda = 1250`, baris lain `0`, `totalDenda = 1250` | | ⬜ Belum |
+| 3 | Bayar angsuran pada tanggal yang sama | `denda = 1250`, `totalAngsuran` = pokok + bunga + 1250; `kretrans.denda = 1250`; jurnal ada baris `K 401020601` 1.250 | | ⬜ Belum |
+| 4 | Inquiry lagi setelah bayar | Denda tidak ditagih ulang | | ⬜ Belum |
+| 5 | Reversal angsuran tsb, lalu inquiry | Baris reversal `denda = -1250`; denda kembali ditagih | | ⬜ Belum |
+| 6 | Kosongkan `KRE_SETTING_PEMBAGI_DENDA_HARIAN`, inquiry | Ditolak `95` | | ⬜ Belum |
+| 7 | Rekening dengan `perc_denda = 0`, telat | `denda = 0` | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Angka langkah 2 sama dengan denda yang dicatat CBS untuk kasus riil tersebut.
+Mengikuti `DendaKreditHelperTest` (11 kasus), `KretransServiceTest` (3 kasus denda/reversal),
+`JadwalKreditServiceTest` (2 kasus).
+
+### TC-220 — Potongan service fee saat pencairan (18 November 2026)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | `/transaksi/pencairanPinjaman` `C1`, reversal (FR-015, BR-039) |
+| Prioritas | **Kritis** (nominal yang diterima nasabah) |
+| Pre-condition | Pinjaman registrasi via `loanStyleId`, plafond 100.000, `kredit.provisi = 2.000`, `kredit.adm_lainnya = 4.000`; tabungan aktif milik nasabah yang sama |
+| Test Data | `tipeTrans = C1`, `nominal = 100000` |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 | Cairkan | `jumlahDiterima = 94000`, `provisi = 2000`, `admLainnya = 4000`; saldo tabungan naik 94.000 | | ⬜ Belum |
+| 2 | Cek `tabtrans` | `110` +100.000, `210` −2.000 "Provisi", `210` −4.000 "Adm.Lainnya" | | ⬜ Belum |
+| 3 | Cek jurnal | 2 head: `D KYD / K tabungan` 100.000; `D tabungan 6.000 / K 1060201 2.000 / K 401020617 4.000` | | ⬜ Belum |
+| 4 | Cairkan lagi rekening yang sama | Ditolak `95` "Pinjaman sudah dicairkan" | | ⬜ Belum |
+| 5 | Cairkan ke tabungan nasabah lain | Ditolak `95` "Rekening tabungan bukan milik nasabah peminjam" | | ⬜ Belum |
+| 6 | Cairkan dengan `C3` | Ditolak `95` (potongan hanya untuk `C1`) | | ⬜ Belum |
+| 7 | Reversal pencairan | Baris `110`/`210` dan kedua jurnal terhapus; `tabung.saldo_akhir` kembali seperti sebelum pencairan | | ⬜ Belum |
+| 8 | Pinjaman tanpa provisi/adm | Perilaku lama: 1 jurnal, `jumlahDiterima = nominal` | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Pola posting sama dengan CBS `kode_trans 110` (contoh riil `001101000135`).
+Mengikuti `services/KretransPencairanTest` (10 kasus).
+
+### TC-221 — Service fee persen via payload registrasi (23 November 2026)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | `/pinjaman/registrasi` tanpa `loanStyleId` + `/transaksi/pencairanPinjaman` `C1` (FR-015, BR-039a) |
+| Prioritas | **Kritis** (nominal yang diterima nasabah) |
+| Pre-condition | Nasabah terverifikasi dengan tabungan aktif |
+| Test Data | `jmlPinjaman = 1000000`, `serviceFee = 6`, `percDenda = 0.5` |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 | Registrasi tanpa `loanStyleId`, `serviceFee = 6` | `00`; `kredit.adm_lainnya = 60000`, `kredit.provisi` NULL | | ⬜ Belum |
+| 2 | Cairkan `C1` | `admLainnya = 60000`, `provisi = 0`, `jumlahDiterima = 940000`; `tabtrans` `110` +1.000.000, `210` −60.000 "Adm.Lainnya" | | ⬜ Belum |
+| 3 | Registrasi `jmlPinjaman = 3500000`, `serviceFee = 2.5` | `kredit.adm_lainnya = 87500` | | ⬜ Belum |
+| 4 | `serviceFee = -1` | Ditolak `95` "Service fee harus berupa persen antara 0 dan kurang dari 100" | | ⬜ Belum |
+| 5 | `serviceFee = 60000` (nominal terkirim sebagai persen) | Ditolak `95`, pesan sama | | ⬜ Belum |
+| 6 | Dengan `loanStyleId` + `serviceFee = 6` | `serviceFee` diabaikan; `adm_lainnya` dari catalog | | ⬜ Belum |
+| 7 | Tanpa `serviceFee` | Perilaku lama: `adm_lainnya` NULL, pencairan tanpa potongan | | ⬜ Belum |
+| 8 | `percDenda = 0.5` | `kredit.perc_denda = 0.500`; angsuran terlambat dikenai denda (metode TC-219) | | ⬜ Belum |
+| 9 | `percDenda = 0` | `kredit.perc_denda = 0.000`; tanpa denda | | ⬜ Belum |
+| 10 | `percDenda = -0.1` atau `100` | Ditolak `95` "Persen denda harus antara 0 dan kurang dari 100" | | ⬜ Belum |
+| 11 | Tanpa `percDenda` | `kredit.perc_denda` NULL; tanpa denda (perilaku lama) | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Mengikuti `services/KreditServiceTest` (9 kasus baru).
+
+### TC-222 — Detail rekening pinjaman & field fee di `/saldo` (23 November 2026)
+
+| Field | Detail |
+|-------|--------|
+| Modul / Fitur | `/pinjaman/detail`, `/pinjaman/saldo` (FR-012) |
+| Prioritas | Tinggi |
+| Pre-condition | Pinjaman dari TC-221 langkah 1 (`jmlPinjaman 1.000.000`, `serviceFee 6`, `percDenda 0.5`), belum dicairkan |
+
+| No | Langkah | Hasil Diharapkan | Hasil Aktual | Status |
+|----|---------|------------------|--------------|--------|
+| 1 | `/detail` sebelum pencairan | `00`; `admLainnya = 60000`, `provisi = 0`, `totalPotongan = 60000`, `jumlahDiterima = 940000`, `percDenda = 0.500`, `sudahDicairkan = false`, `jadwal` sesuai tenor | | ⬜ Belum |
+| 2 | `/saldo` sebelum pencairan | `responseData` kosong (perilaku lama, belum ada transaksi) | | ⬜ Belum |
+| 3 | Cairkan `C1`, lalu `/detail` | `sudahDicairkan = true`, nilai lain tetap | | ⬜ Belum |
+| 4 | `/saldo` setelah pencairan | Berisi `provisi`, `admLainnya = 60000`, `percDenda = 0.500` | | ⬜ Belum |
+| 4a | `/detail` langsung setelah registrasi | `status = 0`; setelah pencairan `status = 1` | | ⬜ Belum |
+| 5 | `/detail` rekening tidak ada | `95` "Rekening pinjaman tidak ditemukan" | | ⬜ Belum |
+| 6 | `/detail` rekening kantor lain (user non-HQ) | 403 | | ⬜ Belum |
+
+**Hasil Akhir:** ⬜ Pass / ⬜ Fail
+**Catatan:** Mengikuti `services/KreditServiceTest$DetailKredit` (3) dan `$SaldoKredit` (1).
 ### TC-301..TC-314 — Angsuran pinjaman sekuensial, tanpa partial payment (M-Pay)
 
 | Field | Detail |
@@ -203,7 +338,7 @@ global, sama pola dengan `GET /deposito/produk-spesial-rate`).
 | 3 (TC-303) | `POST /pinjaman/tagihan` dengan `tglTrans=2026-10-26` (angsuran ke-1 & ke-2 sama-sama telat & belum dibayar) | `00`; `tagihan` berisi 2 baris terurut `angsuranKe: 1, 2`; `totalPokok=2333334.00`, `totalBunga=70000.00`, `totalDenda=0`, `totalTagihan=2403334.00` | | ⬜ Belum |
 | 4 (TC-304) | Tandai seluruh 3 angsuran sudah dibayar (ada baris `my_kode_trans=300` untuk tiap `angsuran_ke`), ulangi `/tagihan` | `00`; `tagihan=[]` (array kosong); `totalPokok=totalBunga=totalDenda=totalTagihan=0` | | ⬜ Belum |
 | 5 (TC-305) | (Regresi, verifikasi kode/log) Panggil `/tagihan` beberapa kali | Query akumulasi tunggakan lama (`getTunggakanPokok`/`getTunggakanBunga`) **tidak** dieksekusi dari path ini (tetap dipakai `listTransKredit`/riwayat) | | ⬜ Belum |
-| 6 (TC-306) | `POST /transaksi/angsuranPinjaman` `{noRekening:001101000328, angsuranKe:1, kuitansi:"KWT-0001", kuitansiId:"K-0001", tipeTrans:"320", kodeKantor:001, userId:5}` (tanpa `pokok`/`bunga`) — angsuran ke-1 memang yang paling awal belum lunas | `00`; posting pokok=1166667.00, bunga=35000.00 (dari jadwal, bukan dari request yang memang tidak mengirimkannya); response `TransKreditAngsuranResponseDTO` berisi `pokok`, `bunga`, `denda=0`, `totalAngsuran=1201667.00` | | ⬜ Belum |
+| 6 (TC-306) | `POST /transaksi/angsuranPinjaman` `{noRekening:001101000328, angsuranKe:1, kuitansi:"KWT-0001", kuitansiId:"K-0001", tipeTrans:"L2", kodeKantor:001, userId:5}` (tanpa `pokok`/`bunga`) — angsuran ke-1 memang yang paling awal belum lunas | `00`; posting pokok=1166667.00, bunga=35000.00 (dari jadwal, bukan dari request yang memang tidak mengirimkannya); response `TransKreditAngsuranResponseDTO` berisi `pokok`, `bunga`, `denda=0`, `totalAngsuran=1201667.00` | | ⬜ Belum |
 | 7 (TC-307) | Tandai seluruh angsuran sudah dibayar, ulangi `/transaksi/angsuranPinjaman` dengan `angsuranKe` mana pun | HTTP 400 `95`, "Pinjaman sudah lunas, tidak ada tagihan yang harus dibayar"; tidak ada posting | | ⬜ Belum |
 | 8 (TC-308) | Angsuran ke-1 sudah dibayar (baris `my_kode_trans=300` ada), kirim `angsuranKe=1` lagi | HTTP 400 `95`, "Angsuran ke-1 sudah dibayar"; tidak ada posting | | ⬜ Belum |
 | 9 (TC-309) | Angsuran ke-1 **belum** dibayar, kirim `angsuranKe=2` (melompat) | HTTP 400 `95`, "Angsuran ke-1 harus dibayar terlebih dahulu"; tidak ada posting | | ⬜ Belum |
@@ -243,7 +378,7 @@ menghasilkan angka yang identik (`3.500.000 × 12% ÷ 12 = 35.000` per periode).
 | 2 (TC-402) | `POST /transaksi/pencairanPinjaman` — body: `{"tglTrans":"2026-08-25","kuitansi":"KW-P001","kuitansiId":"KWID-P001","tipeTrans":"C1","kodeKantor":"001","noRekening":"001101000328","nominal":3500000,"keterangan":"Pencairan pinjaman","userId":"5","noRekeningTabungan":"0010001"}` (nominal = `jmlPinjaman` — wajib sama, validator `ValidNominalHarusSamaDenganPinjaman`) | `00`; dana 3.500.000 masuk ke rekening tabungan `0010001`; `kredit` status aktif; jadwal (TC-401) tidak berubah — pencairan tidak menyentuh `my_kode_trans=200` | | ⬜ Belum |
 | 3 (TC-403) | `POST /pinjaman/jadwal` — body: `{"noRekening":"001101000328","userId":"5"}` | `00`; `responseData.jadwal` berisi 3 baris: `angsuranKe 1` (`tglTrans=2026-09-25`, `pokok=1166667.00`, `bunga=35000.00`), `angsuranKe 2` (`2026-10-25`, `1166667.00`/`35000.00`), `angsuranKe 3` (`2026-11-25`, `1166666.00`/`35000.00`); `totalPokok=3500000.00`, `totalBunga=105000.00` (lihat §4.11.2 `03-api-contract.md` untuk bentuk lengkap) | | ⬜ Belum |
 | 4 (TC-404) | `POST /pinjaman/tagihan` — body: `{"noRekening":"001101000328","tglTrans":"2026-09-25","userId":"5"}` (tanggal jatuh tempo angsuran ke-1, belum ada pembayaran sama sekali) | `00`; `responseData.tagihan` berisi 1 baris `angsuranKe=1`, `pokok=1166667.00`, `bunga=35000.00`, `denda=0`, `totalTagihan=1201667.00`; total list-level sama dengan baris tsb (lihat §4.11.3) | | ⬜ Belum |
-| 5 (TC-405) | `POST /transaksi/angsuranPinjaman` — body: `{"tglTrans":"2026-09-25","angsuranKe":1,"kuitansi":"KWT-0001","kuitansiId":"K-0001","tipeTrans":"320","kodeKantor":"001","noRekening":"001101000328","keterangan":"Angsuran ke-1","userId":"5"}` (angsuranKe diambil dari hasil TC-404; **tanpa** `pokok`/`bunga` — field tsb sudah dihapus dari request, lihat §4.15) | `00`; posting `pokok=1166667.00`, `bunga=35000.00` (diturunkan server dari jadwal, sama persis dengan TC-404, bukan dikirim client); `responseData` berisi `pokok`,`bunga`,`denda=0`,`totalAngsuran=1201667.00`; mengulang `POST /pinjaman/tagihan` sesudahnya untuk `tglTrans=2026-09-25` mengembalikan `tagihan=[]` (angsuran ke-1 sudah lunas, angsuran ke-2 belum jatuh tempo) | | ⬜ Belum |
+| 5 (TC-405) | `POST /transaksi/angsuranPinjaman` — body: `{"tglTrans":"2026-09-25","angsuranKe":1,"kuitansi":"KWT-0001","kuitansiId":"K-0001","tipeTrans":"L2","kodeKantor":"001","noRekening":"001101000328","keterangan":"Angsuran ke-1","userId":"5"}` (angsuranKe diambil dari hasil TC-404; **tanpa** `pokok`/`bunga` — field tsb sudah dihapus dari request, lihat §4.15) | `00`; posting `pokok=1166667.00`, `bunga=35000.00` (diturunkan server dari jadwal, sama persis dengan TC-404, bukan dikirim client); `responseData` berisi `pokok`,`bunga`,`denda=0`,`totalAngsuran=1201667.00`; mengulang `POST /pinjaman/tagihan` sesudahnya untuk `tglTrans=2026-09-25` mengembalikan `tagihan=[]` (angsuran ke-1 sudah lunas, angsuran ke-2 belum jatuh tempo) | | ⬜ Belum |
 
 **Hasil Akhir:** ⬜ Pass / ⬜ Fail
 **Catatan:** Skenario ini menautkan alur **registrasi kredit legacy** (§4.11.1, jalur tanpa
@@ -298,6 +433,9 @@ request/response — lihat §4.12 `03-api-contract.md`.
 | 3 (TC-603) | Transfer `T1` 100.000 dari `A` ke `B`. Habiskan saldo `B` sampai saldo efektif 40.000. Reverse transaksi transfer tersebut | HTTP 400 `95`, pesan menyebut rekening **`B`** (penerima) — bukan `A`. Saldo kedua rekening tidak berubah. Regresi: leg `A` yang justru **dikredit balik** tidak boleh ikut ditolak karena alasan saldo | | ⬜ Belum |
 | 4 (TC-604) | Reverse `D1` pada rekening yang tidak punya baris mutasi/tidak ditemukan pada query saldo | Ditolak `95` (saldo diperlakukan 0 — **fail-closed**), bukan diloloskan | | ⬜ Belum |
 | 5 (TC-605) | Reverse `D1` sebesar 25.000 pada rekening yang saldo efektifnya tepat 25.000 | `00`; diterima (batas perbandingan `>=`, bukan `>`); saldo efektif berakhir 0, tidak negatif | | ⬜ Belum |
+| 6 (TC-606) | Posting setoran via bank `D2` 1.000 (binding `BIND-004`, ABA `0012000002`) ke rekening tabungan `A` | `00`; `tabung.saldo_akhir` `A` +1.000 **dan** `aba.saldo_akhir_pokok` `0012000002` +1.000 (sebelumnya saldo ABA tidak ter-update) | | ⬜ Belum |
+| 7 (TC-607) | Reverse transaksi TC-606 (`tipeTrans:"D2"`) | `00`; baris `tabtrans` pembalik `kode_trans 215`/`my_kode_trans 200` dan `abatrans` pembalik `215`/`200`, keduanya **bertanggal hari ini**; saldo `A` dan ABA kembali seperti sebelum TC-606 (**tidak** bertambah 1.000 lagi). Bila saldo efektif `A` < 1.000 → ditolak `95` seperti TC-601 | | ⬜ Belum |
+| 8 (TC-608) | Posting penarikan via bank `T2` 1.000 dari `A`, lalu reverse (`tipeTrans:"T2"`) | `00` (sebelumnya selalu `95` "KodeTrans tidak dikenal untuk reverse"); `tabtrans` pembalik `115`/`100`, `abatrans` pembalik `115`/`100`; saldo `A` dan ABA kembali seperti semula | | ⬜ Belum |
 
 **Hasil Akhir:** ⬜ Pass / ⬜ Fail
 **Catatan:** Mengikuti `services/TabtransReversalSaldoTest` (5 kasus) di repo `microservice-core`
@@ -383,6 +521,10 @@ Setiap baris wajib punya `KODE_PERK` terisi, dan total `DEBET` = total `KREDI` p
 | Versi | Tanggal | Penyusun | Deskripsi Perubahan |
 |-------|---------|----------|---------------------|
 | 1.7.0 | 22 September 2026 | | Tambah TC-701..TC-706: **pembentukan jurnal antar kantor (ATK) pada transaksi tabungan** — regresi atas bug yang ditemukan saat pengujian (transaksi dari cabang ke rekening pusat membentuk 3 head jurnal, dua kembar, dengan `KODE_PERK` kosong di semua barisnya). Mencakup arah pusat→cabang yang sudah benar (pagar regresi), arah cabang→pusat yang diperbaiki, cabang→cabang lain yang tetap lewat pusat, transaksi satu kantor, serta penolakan fail-closed saat RAK/setting kantor pusat belum diatur. Mengikuti `services/TabtransAtkJournalTest` (6 kasus). Termasuk query verifikasi keseimbangan jurnal per head. |
+| 1.7.1 | 26 Oktober 2026 | | Tambah TC-217: registrasi kredit (dengan dan tanpa `loanStyleId`) tidak lagi gagal 500 karena kolom NOT NULL `kredit.periode_bayar_bunga`/`slik_persentasi_penjamin`. Regresi atas bug di lingkungan dev (21 September – 26 Oktober 2026). Mengikuti 2 kasus baru di `services/KreditServiceTest`. |
+| 1.7.2 | 17 November 2026 | | Tambah TC-218: jurnal angsuran pinjaman memisahkan pokok (KYD) dan bunga (pendapatan bunga), termasuk reversalnya. Mengikuti 2 kasus baru di `services/KretransServiceTest`. |
+| 1.7.3 | 17 November 2026 | | Tambah TC-219: denda keterlambatan pinjaman (inquiry, bayar, reversal, setting kosong, `perc_denda` 0). |
+| 1.7.4 | 18 November 2026 | | Tambah TC-220: potongan service fee (provisi/adm) saat pencairan C1, validasi pencairan ganda dan kepemilikan tabungan, reversal. |
 | 1.0.0 | 23 Juni 2026 | | Dokumen dibuat |
 | 1.1.0 | 5 Agustus 2026 | | Tambah TC-101..TC-108: campaign bebas saldo minimum tabungan (registrasi & update rekening existing, jejak audit, allowlist, office scope, guard header). |
 | 1.2.0 | 25 Agustus 2026 | | Tambah TC-201..TC-211: registrasi kredit via *loan style* M-Pay (CR BPR) — happy path derive `typeKredit`/`jmlPinjaman`/`jmlAngsuran` + snapshot provisi/adm/denda, loan style tidak ditemukan/nonaktif/beda produk/tenor tidak valid, dan alur registrasi lama (tanpa `loanStyleId`) tidak berubah + validasi field wajibnya. Mengikuti `services/KreditServiceTest` (11 kasus). |
@@ -394,6 +536,9 @@ Setiap baris wajib punya `KODE_PERK` terisi, dan total `DEBET` = total `KREDI` p
 | 1.4.0 | 11 September 2026 | | Tambah TC-501..TC-504: registrasi deposito produk **On Call** (`kodeProduk=311`, tenor harian 7/14) — `jkw` di luar {7,14} ditolak `95`, dan regresi bug tanggal jatuh tempo (`tglJt` kini `+hari` untuk On Call, sebelumnya selalu `+bulan`). Mengikuti `services/DepositoServiceTest$OnCall` (4 kasus). Tidak ada perubahan kontrak request/response. |
 | 1.6.0 | 22 September 2026 | | Tambah TC-601..TC-605: **validasi saldo pada reversal transaksi tabungan** — regresi atas bug produksi (rekening bersaldo -4.649 akibat reversal transaksi Juli yang diposting Agustus tanpa cek saldo). Mencakup reversal setoran (`D1`) dan leg penerima transfer (`T1`) yang ditolak saat saldo kurang, leg yang dikredit balik yang sengaja tidak dicek, perlakuan fail-closed saat data saldo tidak ditemukan, dan batas `>=`. Mengikuti `services/TabtransReversalSaldoTest` (5 kasus). Termasuk query SQL deteksi rekening bersaldo negatif untuk audit berkala. |
 | 1.5.0 | 11 September 2026 | | **Koreksi TC-501..TC-503** — memo BPR sebenarnya menetapkan suku bunga **per-tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a), bukan `suku_bunga_default` seperti dicatat pada versi 1.4.0; TC-501/TC-502 kini menegaskan suku bunga diresolusi dari master baru `api_dep_oncall_rate`. TC-503 dikoreksi dari "`jkw` di luar {7,14}" (set hardcoded) menjadi "`jkw` tanpa baris `api_dep_oncall_rate` aktif" (juga mencakup kasus periode program berakhir), dengan pesan penolakan baru "Program deposito on call untuk jangka waktu {N} hari tidak tersedia pada tanggal ini" — **tanpa fallback** ke default produk. Pre-condition menambahkan patch `patch_dep_oncall_rate.sql` & seeder `seed_dep_oncall_rate.sql`. TC-504 tidak berubah. |
+| 1.7.5 | 20 November 2026 | | Tambah TC-606..TC-608: leg bank (ABA) `D2`/`T2` — posting maju `D2` me-repost saldo ABA, reversal `D2` membalik arah (bukan mengkredit lagi), reversal `T2` kini berhasil, `abatrans` pembalik bertanggal hari reversal. Mengikuti `helper/TabtransHelperReversalMapTest` (8 kasus) dan `services/TabtransBankLegTest` (3 kasus). |
+| 1.7.6 | 23 November 2026 | | Tambah TC-221: service fee persen dan `percDenda` via payload registrasi pinjaman (tanpa `loanStyleId`) → `adm_lainnya` nominal dipotong saat pencairan C1, `perc_denda` dipakai hitung denda. Koreksi TC-306/TC-405: `tipeTrans` angsuran `"320"` → `"L2"`. |
+| 1.7.7 | 23 November 2026 | | Tambah TC-222: `/pinjaman/detail` (cek hasil registrasi sebelum pencairan) dan field `provisi`/`admLainnya`/`percDenda` pada `/pinjaman/saldo`. |
 
 ---
 

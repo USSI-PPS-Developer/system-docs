@@ -348,6 +348,11 @@ Kolom kunci: `nasabah_id` (FK→`nasabah`), `jml_pinjaman`, `suku_bunga_per_tahu
 referensi `api_loan_style.id` — tanpa FK constraint, konsisten dengan `nasabah_id`).
 *(patch: `patch_kredit_loan_style.sql` — hanya menambah `loan_style_id`.)*
 
+> **`status`**: `0` = terdaftar, belum dicairkan (diisi saat registrasi, sejak 23 November 2026;
+> sebelumnya tersimpan NULL) · `1` = aktif/sudah dicairkan (diisi pencairan) · `2` = lunas.
+> Reversal pencairan mengembalikan ke `0`. Rekening lama hasil registrasi API yang belum dicairkan
+> masih bisa ber-status NULL (tidak di-backfill).
+
 > ⚠️ Fitur loan style M-Pay memetakan `provisi`/`adm_lainnya`/`perc_denda` di atas sebagai
 > snapshot (`plafond × perc_provisi/perc_adm / 100`, dan salinan `perc_denda` catalog) saat
 > registrasi via `loanStyleId` — tapi ketiga kolom **sudah ada di `kredit` sebelum perubahan
@@ -357,6 +362,14 @@ referensi `api_loan_style.id` — tanpa FK constraint, konsisten dengan `nasabah
 > lama tetap **NULL** di `loan_style_id` (`provisi`/`adm_lainnya`/`perc_denda` tidak disentuh
 > oleh jalur lama). Nilai loan-style adalah **snapshot saat registrasi** — perubahan pada
 > `api_loan_style` belakangan tidak berlaku retroaktif ke kredit yang sudah terdaftar.
+> ⚠️ Dua kolom legacy `kredit` yang **NOT NULL dengan default DB**, `periode_bayar_bunga`
+> (`'3'`) dan `slik_persentasi_penjamin` (`0.00`), dipetakan di entity sejak raw import Akulaku
+> (21 September 2026). Karena kolom yang dipetakan selalu ikut dikirim di INSERT, entity memberi
+> nilai awal yang **sama dengan default DB**. Kalau tidak, registrasi lewat
+> `POST /pinjaman/registrasi` (yang tidak mengisi kedua kolom ini) gagal dengan error NULL —
+> seperti yang terjadi 21 September s.d. 26 Oktober 2026. Raw import Akulaku hanya menimpa nilai
+> itu bila sel sumbernya terisi.
+>
 > `perc_denda` di sini **hanya disimpan**; belum ada logic penerapan denda keterlambatan pada
 > alur angsuran (lihat FR-012a di SRS). `suku_bunga_per_tahun` (kolom kredit yang sudah ada
 > sejak awal, di atas) juga ikut diturunkan dari `api_loan_style.suku_bunga_per_tahun` pada
@@ -376,6 +389,12 @@ Kolom kunci: `nasabah_id` (FK→`nasabah`), `kode_integrasi`, `suku_bunga`, `per
 Transaksi deposito: `tgl_trans`, `no_rekening` (→`deposito`), `kode_trans`, `my_kode_trans`,
 `kuitansi`, `userid`, `pokok_trans`, `keterangan`, **`kode_kantor`**, `norek_tabungan`,
 `no_rekening_aba`, `jam`, `kuitansi_id`.
+
+> ⚠️ **`kuitansi_id` pada `tabtrans`, `kretrans`, `deptrans`, dan `transaksi_master`** dipetakan
+> aplikasi sebagai `VARCHAR(20)` dan dibaca di awal setiap posting (cek duplikat kuitansi). Kolom
+> ini **tidak selalu ada** di skema legacy (mis. BPR SKB, 20 November 2026: semua transaksi gagal
+> `96`). Patch `patch_add_kuitansi_id.sql` menambahkannya beserta index `idx_kuitansi_id`, dan
+> bersifat idempotent (aman dijalankan pada DB yang kolomnya sudah ada).
 
 #### Jurnal GL — `transaksi_master` / `transaksi_detail`
 > Ditulis saat posting transaksi (bagian dari atomicity money-path).
@@ -804,6 +823,9 @@ contoh `INSERT` yang di-*comment* sebagai referensi struktur. Seeder resmi
 | 1.3.0 | 25 Agustus 2026 | | CR BPR — pinjaman M-Pay: tambah tabel milik H2H `api_loan_style` (master catalog *loan style*: nominal/tenor & persentase provisi/adm/denda) + DDL-nya; patch `patch_kredit_loan_style.sql` menambah **1 kolom nullable baru** pada `kredit` (`loan_style_id`). `kredit.provisi`/`adm_lainnya`/`perc_denda` **sudah ada sebelumnya** di tabel legacy ini (`DECIMAL(18,2)`/`DECIMAL(18,2)`/`DECIMAL(6,3)`, cocok persis) — fitur ini hanya memetakan & mengisinya sebagai snapshot saat registrasi via `loanStyleId`, **tidak** menambahnya lewat patch. Daftar Tabel §1 dirapikan ulang nomornya (10→27). Aturan data #10/#11 ditambah. **Belum ada seed** `api_loan_style` — menunggu konfirmasi angka BPR; **denda keterlambatan (`perc_denda`) belum diterapkan**, hanya kolom data. |
 | 1.3.1 | 25 Agustus 2026 | | Tambah kolom `api_loan_style.suku_bunga_per_tahun` (`DECIMAL(7,4)`, patch **baru** `patch_api_loan_style_suku_bunga.sql`, `ALTER ... DEFAULT 0` karena tabel sudah punya baris live dari patch sebelumnya) — `kredit.suku_bunga_per_tahun` (kolom lama, bukan baru) sekarang juga diturunkan dari catalog pada jalur `loanStyleId`. Aturan data #12 baru: baris catalog dengan suku bunga `<= 0` (mis. belum di-backfill setelah `ALTER`) ditolak aplikasi. |
 | 1.4.0 | 11 September 2026 | | Tambah kolom `dep_produk.kode_jenis` (`CHAR(1)`, nullable, referensi tabel `dep_kode_jenis`: 1=Bulanan/2=OnCall/3=BDD, tanpa FK) via patch **baru** `patch_dep_produk_kode_jenis.sql` — juga membackfill `301/303/306/312→'1'`, `311→'2'` (`399` dibiarkan `NULL`). Aturan data #13 baru: produk On Call (`kode_jenis='2'`) membatasi `jkw` ke 7/14 hari, dan mencatat perbaikan bug lama yang menghitung tanggal jatuh tempo dalam bulan untuk semua produk (termasuk yang seharusnya harian). Tabel legacy `dep_produk` hanya bertambah 1 kolom nullable — tidak ada dampak ke baris/aplikasi lain. |
+| 1.5.1 | 26 Oktober 2026 | | Catatan tabel `kredit`: `periode_bayar_bunga` (default `'3'`) dan `slik_persentasi_penjamin` (default `0.00`) adalah kolom legacy NOT NULL yang dipetakan entity sejak raw import Akulaku; entity kini mengisi nilai default yang sama dengan DB (perbaikan bug registrasi kredit 500). Tanpa perubahan skema. |
+| 1.5.2 | 20 November 2026 | | Patch **baru** `patch_add_kuitansi_id.sql`: menambah `kuitansi_id` `VARCHAR(20)` + index `idx_kuitansi_id` pada `tabtrans`, `transaksi_master`, `deptrans`, `kretrans` bila belum ada (idempotent, kompatibel MySQL 5.5). Kolom ini sudah dipetakan aplikasi sejak awal tetapi tidak pernah dibuat lewat patch; di instalasi yang belum memilikinya semua transaksi gagal `96`. |
+| 1.5.3 | 23 November 2026 | | `kredit.status`: registrasi API (interaktif dan batch) kini mengisi `0` (belum dicairkan); sebelumnya NULL. Arti nilai 0/1/2 didokumentasikan. Tanpa patch. |
 | 1.5.0 | 11 September 2026 | | **Koreksi versi 1.4.0** — memo BPR "Program Deposito On Call" yang sebenarnya menetapkan suku bunga **berbeda per tenor** (7 hari = 2,5% p.a, 14 hari = 3% p.a, periode 1–30 September 2026), bukan `dep_produk.suku_bunga_default` seperti tercatat sebelumnya; satu baris `dep_produk` tidak dapat menyimpan dua suku bunga berbeda. Tambah tabel milik H2H **baru** `api_dep_oncall_rate` (bentuk meniru `api_tab_campaign`, keyed by `jkw` alih-alih `kode_kantor`) + DDL-nya; patch `patch_dep_oncall_rate.sql` (buat tabel) dan `seed_dep_oncall_rate.sql` (seed 2 baris memo, `no_memo` **placeholder** — pola sama dengan `seed_api_tab_campaign.sql`). Daftar Tabel §1 dirapikan ulang nomornya (10→28, tabel baru jadi #11). Aturan data #13 dikoreksi (`kode_jenis` tidak lagi menentukan `jkw` yang diterima) dan #14 baru (resolusi `api_dep_oncall_rate` = validasi tenor, **tanpa fallback** ke default produk — berbeda dari `api_tab_campaign`). |
 
 ---
