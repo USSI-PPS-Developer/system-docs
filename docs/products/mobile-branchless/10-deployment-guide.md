@@ -69,6 +69,7 @@ petugas, bukan di-*bake* saat build.
 | `scheme` | `mobilebranchless` |
 | `version` | `1.0.0` |
 | Android `package` / iOS `bundleIdentifier` | **`com.lt4.mobilebranchless`** |
+| Android `package` APK dev (`build-apk.sh`) | `com.lt4.mobilebranchless.dev`, label **IBS BranchlessPro DEV** (lihat §5.4) |
 | `orientation` | `portrait` |
 | `android.usesCleartextTraffic` | **`true`** |
 | Plugin | `expo-font`, `expo-dev-client`, `expo-secure-store`, `expo-sqlite` |
@@ -161,6 +162,34 @@ npx tsc --noEmit         # type check
 > Linting juga tidak berjalan (`.eslintrc.js` merujuk `@react-native` yang tidak terpasang).
 > Gerbang kualitas otomatis praktis hanya `tsc`. Perbaiki keduanya sebelum menjadikan CI
 > sebagai syarat rilis.
+
+### 5.4 Build APK lokal (`build-apk.sh`) — dev vs prod
+
+Karena jatah EAS free tier terbatas, APK untuk QA/klien dibangun lokal lewat Gradle:
+
+```sh
+./build-apk.sh              # APK DEV  → apidev-branchless.bkkjateng.co.id
+./build-apk.sh --prod       # APK PROD → apiprod-branchless.bkkjateng.co.id
+./build-apk.sh --clean      # gradlew clean dulu
+./build-apk.sh --install    # langsung adb install
+```
+
+Hasil di `builds/ibs-branchless-<env>-<versi>-<timestamp>.apk`. APK dev dibedakan dari prod:
+
+| | APK prod | APK dev |
+|---|---|---|
+| Package Android | `com.lt4.mobilebranchless` | `com.lt4.mobilebranchless.dev` |
+| Nama di launcher | IBS BranchlessPro | IBS BranchlessPro DEV |
+| Badge di dalam app | — | pil merah **DEV · SERVER UJI COBA** di atas semua layar |
+| URL API pusat | `apiprod-…` | `apidev-…` |
+
+- Package dikendalikan property Gradle `-PappEnv` (`android/app/build.gradle`; tanpa property = prod),
+  label lewat placeholder manifest `${appLabel}`. Badge dirender `src/components/EnvBadge.tsx`
+  berdasarkan `API_ENV`.
+- Karena package berbeda, APK dev & prod **bisa terpasang berdampingan** di satu HP, dengan data
+  SQLite & SecureStore **terpisah** — di APK dev kode lembaga, login, dan setting printer diisi ulang.
+  Android ID (`X-Device-Id`) tetap sama selama keystore sama.
+- Skrip memverifikasi URL di bundle dan nama package APK (via `aapt`) sebelum menyalin hasil.
 
 ## 6. Distribusi & Penyiapan Perangkat Petugas
 
@@ -310,6 +339,7 @@ Aplikasi hanya **memicu** pembangkitan lewat `GET /worker/generate-master-nasaba
 | 1.0.2 | 7 Oktober 2026 | | Otorisasi pindah ke API lembaga / core (`app_otorisasi`); checklist `[otorisasi] role_otorisator` & limit otorisator core. |
 | 1.0.3 | 7 Oktober 2026 | | Kunci SecureStore `wajib_buka_kas` & `kas_saldo_tutup_<tgl>`; checklist migration API pusat V6 (`lembaga.wajib_buka_kas`). |
 | 1.0.4 | 12 Oktober 2026 | | §6.3 & troubleshooting: login ditolak bila DB master hari ini belum diunduh (CR klien). |
+| 1.0.5 | 23 November 2026 | | §3.1 & §5.4: build APK lokal `build-apk.sh` dev/prod; APK dev memakai package `com.lt4.mobilebranchless.dev`, label "DEV", dan badge di dalam app. |
 
 ---
 
